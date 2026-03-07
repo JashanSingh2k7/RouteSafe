@@ -4,7 +4,7 @@ import io
 import logging
 from typing import Optional
 import httpx
-from models.hazard import HazardPoint
+from models.schemas import HazardPoint
 
 logger = logging.getLogger(__name__)
 
