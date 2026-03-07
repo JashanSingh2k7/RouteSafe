@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 load_dotenv()  # MUST be before router imports so env vars are available
 
-from routers import ingestion, scoring
+from routers import ingestion, scoring, directions
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -48,8 +48,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "https://wildroute.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://wildroute.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -61,6 +62,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(ingestion.router, prefix="/ingest", tags=["L1 — Ingestion"])
 app.include_router(scoring.router,   prefix="/score",  tags=["L3 — Risk Scorer"])
+app.include_router(directions.router, prefix="/directions", tags=["Directions"])
 # app.include_router(hazard.router,    prefix="/hazard",   tags=["L2 — Hazard Field"])
 # app.include_router(optimizer.router, prefix="/optimize", tags=["L4 — Route Optimizer"])
 
