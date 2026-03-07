@@ -23,9 +23,7 @@ Consumed by: routers/scoring.py, L4 optimizer
 import math
 import logging
 from typing import Optional
-
 import h3
-
 from models.schemas import RouteSegment, ScoredSegment
 from services.hazard_field import H3_RESOLUTION, TIME_HORIZONS_HOURS
 from services.smoke_dose import calculate_trip_dose, severity_to_pm25, TripDose
@@ -74,12 +72,14 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _get_segment_hexes(
-    start_lat: float, start_lon: float,
-    end_lat: float, end_lon: float,
-    resolution: int = H3_RESOLUTION,
-) -> set[str]:
-    """Find all H3 hexes a segment passes through by sampling every ~1 km."""
+def _get_segment_hexes( start_lat: float, start_lon: float, end_lat: float, end_lon: float, resolution: int = H3_RESOLUTION,) -> set[str]:
+    """
+    Find all H3 hexes a segment passes through by sampling points along it.
+
+    Linear interpolation between start/end, sampling every ~1 km.
+    Minimum 3 samples (start, mid, end) even for short segments.
+    """
+
     dist = _haversine_km(start_lat, start_lon, end_lat, end_lon)
     n_samples = max(3, int(dist / SAMPLE_INTERVAL_KM) + 1)
 

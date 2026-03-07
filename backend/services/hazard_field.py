@@ -24,9 +24,7 @@ import math
 import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-
 import h3
-
 from models.schemas import HazardPoint, HazardPolygon, WindVector
 from services.wind_interpolation import interpolate_wind
 
@@ -66,7 +64,7 @@ class HazardCell:
 # ─────────────────────────────────────────────────────────────────────────────
 
 TIME_HORIZONS_HOURS: list[float] = [0, 1, 2, 4, 6]
-H3_RESOLUTION: int = 7                             # ~5.16 km² per hex
+H3_RESOLUTION: int = 7 # ~5.16 km² per hex
 MAX_SEVERITY: float = 1.0
 MIN_SEVERITY_THRESHOLD: float = 0.05
 
@@ -84,7 +82,8 @@ DISTANCE_DECAY_RATE = 0.04
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _frp_to_severity(fire: HazardPoint) -> float:
-    """FRP (MW) → 0.0–1.0 severity. Falls back to string tier if no FRP."""
+    """FRP (MW) → 0.0 to 1.0 severity. Falls back to string tier if no FRP."""
+
     frp = fire.metadata.get("frp_mw")
     if frp is not None:
         return min(float(frp) / FRP_SEVERITY_MAX, 1.0)
@@ -117,11 +116,9 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 # PLUME GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _generate_plume(
-    fire: HazardPoint, wind: dict, hours_ahead: float,
-    now: datetime, severity_base: float,
-) -> SmokePlume:
+def _generate_plume( fire: HazardPoint, wind: dict, hours_ahead: float, now: datetime, severity_base: float, ) -> SmokePlume:
     """Build a wind-stretched ellipse for one fire at one time horizon."""
+
     speed = wind["speed_kmh"]
     direction = wind["direction_deg"]
     drift_km = speed * hours_ahead
@@ -180,6 +177,7 @@ def _decay_severity(base_severity: float, hours_ahead: float, distance_km: float
 
 def _rasterise_plume(plume: SmokePlume, resolution: int = H3_RESOLUTION) -> list[HazardCell]:
     """Plume polygon → H3 hex cells with distance-decayed severity."""
+
     time_decayed = _decay_severity(plume.severity_base, plume.hours_ahead)
     if time_decayed < MIN_SEVERITY_THRESHOLD:
         return []
@@ -214,6 +212,7 @@ def _rasterise_plume(plume: SmokePlume, resolution: int = H3_RESOLUTION) -> list
 
 def _merge_hex_grid(cells: list[HazardCell]) -> dict[str, float]:
     """Merge cells into {h3_index: severity}. Overlaps sum, capped at 1.0."""
+
     grid: dict[str, float] = {}
     for cell in cells:
         grid[cell.h3_index] = min(grid.get(cell.h3_index, 0.0) + cell.severity, MAX_SEVERITY)
@@ -238,6 +237,7 @@ def _overlay_aqi(
 
 def _plumes_to_polygons(plumes: list[SmokePlume]) -> list[HazardPolygon]:
     """Convert internal SmokePlumes to API-facing HazardPolygon schema."""
+    
     polygons = []
     for plume in plumes:
         severity_str = (
