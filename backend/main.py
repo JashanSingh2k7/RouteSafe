@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from dotenv import load_dotenv
 
+from routers import ingestion
+
 # ── Routers ──────────────────────────────────────────────────────────────────
 # Uncomment each router as you build it out
 # from routers import ingestion, hazard, scoring, optimizer
@@ -80,7 +82,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)  # compress large GeoJSON 
 # Each layer gets its own router and URL prefix.
 # Uncomment as each file is created.
 
-# app.include_router(ingestion.router, prefix="/ingest",   tags=["L1 — Ingestion"])
+app.include_router(ingestion.router, prefix="/ingest",   tags=["L1 — Ingestion"])
 # app.include_router(hazard.router,    prefix="/hazard",   tags=["L2 — Hazard Field"])
 # app.include_router(scoring.router,   prefix="/score",    tags=["L3 — Risk Scorer"])
 # app.include_router(optimizer.router, prefix="/optimize", tags=["L4 — Route Optimizer"])

@@ -19,6 +19,7 @@ import logging
 import httpx
 
 from models.schemas import HazardPoint
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def _build_url(lat: float, lon: float) -> str:
     )
 
 
-async def get_aqi_hazard(lat: float, lon: float) -> HazardPoint | None:
+async def get_aqi_hazard(lat: float, lon: float) -> Optional[HazardPoint]:
     """
     Fetch current AQI and PM2.5 for a location and return a HazardPoint.
 
