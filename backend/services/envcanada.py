@@ -118,7 +118,7 @@ async def get_wind_vectors_for_route(
 
 
 # ── Local test ────────────────────────────────────────────────────────────────
-if _name_ == "_main_":
+if __name__ == "__main__":
     import asyncio
 
     async def _test():
