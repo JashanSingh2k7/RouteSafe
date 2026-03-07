@@ -13,13 +13,15 @@ from fastapi.responses import JSONResponse
 
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from routers import ingestion
 
 # ── Routers ──────────────────────────────────────────────────────────────────
 # Uncomment each router as you build it out
 # from routers import ingestion, hazard, scoring, optimizer
 
-load_dotenv()
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
