@@ -112,15 +112,36 @@ export function routeToLineGeoJSON(segments) {
  * Convert hazard_polygons array into a GeoJSON FeatureCollection.
  * Each polygon is a smoke plume with severity and timestamp.
  *
+ * If selectedHours is provided, only includes polygons whose valid_at
+ * falls within that time horizon (matching L2's TIME_HORIZONS_HOURS).
+ * If null/undefined, returns all polygons.
+ *
  * Backend fields: hazard_type, severity, valid_at, coordinates, source_fire
  *
  * coordinates come as [[lon, lat], ...] from the backend (GeoJSON order),
  * so they can be used directly — no flipping needed.
  */
-export function polygonsToGeoJSON(polygons) {
+export function polygonsToGeoJSON(polygons, selectedHours = null) {
+  let filtered = polygons;
+
+  if (selectedHours !== null && selectedHours !== undefined) {
+    // Each polygon has a valid_at timestamp. Filter to only show
+    // polygons at or before the selected time horizon.
+    // We compare hours offset from the earliest valid_at in the set.
+    if (polygons.length > 0) {
+      const times = polygons.map((p) => new Date(p.valid_at).getTime());
+      const earliest = Math.min(...times);
+
+      filtered = polygons.filter((poly) => {
+        const hoursFromStart = (new Date(poly.valid_at).getTime() - earliest) / (1000 * 60 * 60);
+        return hoursFromStart <= selectedHours + 0.1; // small tolerance
+      });
+    }
+  }
+
   return {
     type: "FeatureCollection",
-    features: polygons.map((poly) => ({
+    features: filtered.map((poly) => ({
       type: "Feature",
       properties: {
         severity: poly.severity,
