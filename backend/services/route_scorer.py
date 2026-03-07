@@ -1,22 +1,21 @@
 """
 services/route_scorer.py
 
-L3 — Risk Scorer
+L3 — Risk Scorer + Smoke Dose Calculator
 
-Takes RouteSegments + L2's time-bucketed hex grids and scores each segment.
+Scores each route segment against the time-bucketed hazard field,
+then calculates cumulative smoke dose for the entire trip.
 
-The key idea: a segment 3 hours into the trip should be scored against
-the T+2h or T+4h hazard grid (not T+0), because smoke moves over time.
-This is what makes our scoring predictive, not just reactive.
+Two outputs:
+    1. Per-segment risk scores (for coloring the route on the map)
+    2. Trip-level smoke dose report (the headline cigarette-equivalents metric)
 
 Pipeline:
-    RouteSegments + grids_by_time
-        → for each segment:
-            1. Find which H3 hexes the segment passes through
-            2. Match segment's arrival time to the nearest time bucket
-            3. Look up each hex's severity in that time bucket
-            4. Take the worst severity as the segment's risk_score
-        → return list[ScoredSegment] + route summary
+    RouteSegments + grids_by_time + health_profile
+        → score each segment against correct time bucket
+        → calculate PM2.5 dose per segment
+        → sum into cumulative trip dose
+        → convert to cigarette equivalents
 
 Consumed by: routers/scoring.py, L4 optimizer
 """
@@ -29,6 +28,7 @@ import h3
 
 from models.schemas import RouteSegment, ScoredSegment
 from services.hazard_field import H3_RESOLUTION, TIME_HORIZONS_HOURS
+from services.smoke_dose import calculate_trip_dose, severity_to_pm25, TripDose
 
 logger = logging.getLogger(__name__)
 
@@ -37,29 +37,22 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Sample a point along the segment every ~1 km to check for hazards.
-# Too sparse = miss hazard zones between start/end.
-# Too dense = slow for no benefit (H3 res 7 hexes are ~5 km anyway).
 SAMPLE_INTERVAL_KM = 1.0
 
-# Risk level thresholds for route-level classification
 RISK_THRESHOLDS = {
-    "safe":      0.15,    # below this = green
-    "moderate":  0.40,    # 0.15–0.40 = yellow
-    "dangerous": 0.70,    # 0.40–0.70 = orange
-                          # above 0.70 = red (critical)
+    "safe":      0.15,
+    "moderate":  0.40,
+    "dangerous": 0.70,
 }
 
-# AQI estimation from severity (rough mapping for frontend display)
-# These are approximate PM2.5-based AQI values
 SEVERITY_TO_AQI = [
-    (0.0,  25),    # clean air
-    (0.15, 50),    # good
-    (0.30, 100),   # moderate
-    (0.45, 150),   # unhealthy for sensitive groups
-    (0.60, 200),   # unhealthy
-    (0.80, 300),   # very unhealthy
-    (1.0,  500),   # hazardous
+    (0.0,  25),
+    (0.15, 50),
+    (0.30, 100),
+    (0.45, 150),
+    (0.60, 200),
+    (0.80, 300),
+    (1.0,  500),
 ]
 
 
@@ -86,18 +79,13 @@ def _get_segment_hexes(
     end_lat: float, end_lon: float,
     resolution: int = H3_RESOLUTION,
 ) -> set[str]:
-    """
-    Find all H3 hexes a segment passes through by sampling points along it.
-
-    Linear interpolation between start/end, sampling every ~1 km.
-    Minimum 3 samples (start, mid, end) even for short segments.
-    """
+    """Find all H3 hexes a segment passes through by sampling every ~1 km."""
     dist = _haversine_km(start_lat, start_lon, end_lat, end_lon)
     n_samples = max(3, int(dist / SAMPLE_INTERVAL_KM) + 1)
 
     hexes = set()
     for i in range(n_samples):
-        t = i / (n_samples - 1)  # 0.0 → 1.0
+        t = i / (n_samples - 1)
         lat = start_lat + t * (end_lat - start_lat)
         lon = start_lon + t * (end_lon - start_lon)
         hexes.add(h3.latlng_to_cell(lat, lon, resolution))
@@ -109,29 +97,19 @@ def _match_time_bucket(
     cumulative_min: float,
     horizons: list[float] = TIME_HORIZONS_HOURS,
 ) -> float:
-    """
-    Snap a segment's arrival time to the nearest available time bucket.
-
-    If equidistant between two buckets, picks the LATER one (conservative —
-    smoke has had more time to spread).
-
-    If the segment is beyond the last horizon (e.g. 8 hours into a trip
-    but max horizon is 6h), uses the last bucket. Smoke beyond 6h is
-    uncertain anyway.
-    """
+    """Snap a segment's arrival time to the nearest available time bucket.
+    Ties go to the later bucket (conservative — smoke has spread more)."""
     cumulative_hours = cumulative_min / 60.0
 
-    # Beyond our prediction window — use the last bucket
     if cumulative_hours >= horizons[-1]:
         return horizons[-1]
 
-    # Find the closest bucket, preferring later on ties
     best = horizons[0]
     best_diff = abs(cumulative_hours - horizons[0])
 
     for h in horizons[1:]:
         diff = abs(cumulative_hours - h)
-        if diff <= best_diff:  # <= means ties go to the later bucket
+        if diff <= best_diff:
             best = h
             best_diff = diff
 
@@ -139,19 +117,14 @@ def _match_time_bucket(
 
 
 def _estimate_aqi(severity: float) -> float:
-    """
-    Rough AQI estimate from severity score.
-    Uses linear interpolation between the defined breakpoints.
-    """
+    """Severity score → approximate AQI via interpolation."""
     if severity <= 0.0:
         return SEVERITY_TO_AQI[0][1]
 
     for i in range(1, len(SEVERITY_TO_AQI)):
         s_prev, aqi_prev = SEVERITY_TO_AQI[i - 1]
         s_curr, aqi_curr = SEVERITY_TO_AQI[i]
-
         if severity <= s_curr:
-            # Interpolate between breakpoints
             ratio = (severity - s_prev) / (s_curr - s_prev) if s_curr != s_prev else 0
             return round(aqi_prev + ratio * (aqi_curr - aqi_prev), 1)
 
@@ -159,7 +132,7 @@ def _estimate_aqi(severity: float) -> float:
 
 
 def _classify_route_risk(max_score: float) -> str:
-    """Classify overall route risk level from the worst segment score."""
+    """Classify overall route risk from the worst segment score."""
     if max_score < RISK_THRESHOLDS["safe"]:
         return "safe"
     elif max_score < RISK_THRESHOLDS["moderate"]:
@@ -179,27 +152,23 @@ def _score_segment(
     hex_grid: dict[str, float],
 ) -> ScoredSegment:
     """
-    Score one segment against a hex grid (from the matched time bucket).
-
-    Finds all hexes the segment passes through, looks up their severity,
-    and takes the WORST one as the risk score. This is conservative —
-    if any part of the segment is dangerous, the whole segment is flagged.
+    Score one segment. Finds all hexes it passes through, takes the worst
+    severity, and converts to risk score + AQI + PM2.5 estimates.
     """
     hexes = _get_segment_hexes(
         segment.start_lat, segment.start_lon,
         segment.end_lat, segment.end_lon,
     )
 
-    # Look up severity for each hex
     max_severity = 0.0
     for hex_id in hexes:
         sev = hex_grid.get(hex_id, 0.0)
         if sev > max_severity:
             max_severity = sev
 
-    # Determine hazard type and AQI estimate
     hazard_type = "smoke" if max_severity > 0.0 else None
     aqi = _estimate_aqi(max_severity) if max_severity > 0.0 else None
+    pm25 = severity_to_pm25(max_severity) if max_severity > 0.0 else None
 
     return ScoredSegment(
         index=segment.index,
@@ -213,6 +182,8 @@ def _score_segment(
         risk_score=round(max_severity, 4),
         hazard_type=hazard_type,
         aqi_estimate=aqi,
+        pm25_estimate=round(pm25, 2) if pm25 else None,
+        smoke_dose_ug=None,  # filled in after dose calculation
     )
 
 
@@ -223,27 +194,18 @@ def _score_segment(
 def score_route(
     segments: list[RouteSegment],
     grids_by_time: dict[float, dict[str, float]],
+    health_profile: str = "default",
 ) -> dict:
     """
-    Score all segments of a route against the time-bucketed hazard field.
-
-    Each segment is matched to the time bucket closest to its arrival time,
-    then scored against that bucket's hex grid. This makes scoring PREDICTIVE:
-    "when you arrive at this stretch of highway in 3 hours, how bad will
-    the smoke be?"
+    Score all segments + calculate cumulative smoke dose.
 
     Args:
-        segments:       List of RouteSegment objects from polyline_decoder.
+        segments:       RouteSegment objects from polyline_decoder.
         grids_by_time:  {hours_ahead: {h3_index: severity}} from L2.
+        health_profile: Key for health profile ("default", "child", "asthma", etc.)
 
     Returns:
-        Dict with:
-            scored_segments:  list[ScoredSegment] — one per input segment
-            max_risk_score:   float — worst segment score on the route
-            high_risk_count:  int — segments with risk > 0.40
-            route_risk_level: str — "safe" | "moderate" | "dangerous" | "critical"
-            total_distance_km: float
-            total_time_min:    float
+        Dict with scored_segments, route summary stats, and smoke_dose report.
     """
     if not segments:
         logger.warning("No segments to score.")
@@ -254,6 +216,7 @@ def score_route(
             "route_risk_level": "safe",
             "total_distance_km": 0.0,
             "total_time_min": 0.0,
+            "smoke_dose": None,
         }
 
     available_horizons = sorted(grids_by_time.keys()) if grids_by_time else [0]
@@ -261,22 +224,36 @@ def score_route(
     scored: list[ScoredSegment] = []
 
     for segment in segments:
-        # Match this segment's arrival time to the right hazard snapshot
         bucket = _match_time_bucket(segment.cumulative_time_min, available_horizons)
         hex_grid = grids_by_time.get(bucket, {})
-
         scored_seg = _score_segment(segment, hex_grid)
         scored.append(scored_seg)
 
-    # Route-level summary stats
+    # ── Calculate smoke dose ──────────────────────────────────────────────
+    # Build the input list: (segment_index, risk_score, travel_time_min)
+    dose_input = [
+        (seg.index, seg.risk_score, seg.travel_time_min)
+        for seg in scored
+    ]
+    trip_dose = calculate_trip_dose(dose_input, profile_key=health_profile)
+
+    # Write per-segment dose back onto the ScoredSegment objects
+    dose_by_index = {d.segment_index: d for d in trip_dose.segment_doses}
+    for seg in scored:
+        seg_dose = dose_by_index.get(seg.index)
+        if seg_dose:
+            seg.smoke_dose_ug = seg_dose.effective_dose_ug
+
+    # ── Route-level summary ───────────────────────────────────────────────
     max_risk = max(s.risk_score for s in scored)
     high_risk_count = sum(1 for s in scored if s.risk_score >= RISK_THRESHOLDS["moderate"])
     total_dist = sum(s.distance_km for s in scored)
     total_time = scored[-1].cumulative_time_min + scored[-1].travel_time_min if scored else 0.0
 
     logger.info(
-        "Route scored — %d segments, max_risk=%.3f, high_risk=%d, level=%s",
-        len(scored), max_risk, high_risk_count, _classify_route_risk(max_risk),
+        "Route scored — %d segs, max_risk=%.3f, level=%s, dose=%.2f cigarettes [%s]",
+        len(scored), max_risk, _classify_route_risk(max_risk),
+        trip_dose.cigarette_equivalents, health_profile,
     )
 
     return {
@@ -286,6 +263,7 @@ def score_route(
         "route_risk_level": _classify_route_risk(max_risk),
         "total_distance_km": round(total_dist, 2),
         "total_time_min": round(total_time, 2),
+        "smoke_dose": trip_dose,
     }
 
 
@@ -297,7 +275,6 @@ if __name__ == "__main__":
     from services.hazard_field import generate_hazard_field
     from models.schemas import HazardPoint, WindVector
 
-    # ── Mock L1 data ──────────────────────────────────────────────────────
     mock_fires = [
         HazardPoint(
             lat=51.12, lon=-115.80,
@@ -319,10 +296,9 @@ if __name__ == "__main__":
         ),
     ]
 
-    # ── Run L2 to get hazard field ────────────────────────────────────────
     polygons, flat_grid, grids_by_time = generate_hazard_field(mock_fires, mock_wind, mock_aqi)
 
-    # ── Mock route segments (simulating a ~200km drive past the fire) ─────
+    # Mock route: 20 segments, 10 km each, 6 min each = 200 km, 2 hours
     mock_segments = []
     for i in range(20):
         start_lat = 51.05 + i * 0.02
@@ -338,19 +314,26 @@ if __name__ == "__main__":
             cumulative_time_min=i * 6.0,
         ))
 
-    # ── Run L3 scoring ────────────────────────────────────────────────────
-    result = score_route(mock_segments, grids_by_time)
+    # Test with multiple health profiles
+    for profile in ["default", "child", "asthma"]:
+        result = score_route(mock_segments, grids_by_time, health_profile=profile)
+        dose = result["smoke_dose"]
 
-    print(f"\nRoute risk level: {result['route_risk_level']}")
-    print(f"Max risk score:   {result['max_risk_score']}")
-    print(f"High-risk segs:   {result['high_risk_count']}/{len(mock_segments)}")
-    print(f"Total distance:   {result['total_distance_km']} km")
-    print(f"Total time:       {result['total_time_min']} min")
+        print(f"\n{'=' * 60}")
+        print(f"PROFILE: {dose.profile_label}")
+        print(f"{'=' * 60}")
+        print(f"Route risk:       {result['route_risk_level']}")
+        print(f"Max risk score:   {result['max_risk_score']}")
+        print(f"Cigarettes:       {dose.cigarette_equivalents:.2f}")
+        print(f"Total dose:       {dose.total_effective_dose_ug:.1f} µg")
+        print(f"Peak PM2.5:       {dose.peak_pm25_ugm3:.1f} µg/m³")
+        print(f"Avg PM2.5:        {dose.avg_pm25_ugm3:.1f} µg/m³")
+        print(f"Time in smoke:    {dose.time_in_smoke_min:.0f} min")
+        print(f"Advisory:         {dose.health_advisory[:100]}...")
 
-    print("\nPer-segment scores:")
-    for seg in result["scored_segments"]:
-        bar = "█" * int(seg.risk_score * 20)
-        risk_str = f"{seg.risk_score:.3f}"
-        aqi_str = f"AQI≈{seg.aqi_estimate:.0f}" if seg.aqi_estimate else "clean"
-        print(f"  #{seg.index:02d} [{risk_str}] {bar:<20s} {aqi_str}")
-        
+        print("\nPer-segment:")
+        for seg in result["scored_segments"]:
+            bar = "█" * int(seg.risk_score * 20)
+            dose_str = f"{seg.smoke_dose_ug:.1f}µg" if seg.smoke_dose_ug else "0"
+            pm_str = f"PM2.5={seg.pm25_estimate:.0f}" if seg.pm25_estimate else "clean"
+            print(f"  #{seg.index:02d} [{seg.risk_score:.3f}] {bar:<20s} {pm_str:<15s} dose={dose_str}")
