@@ -58,9 +58,27 @@ class ScoredSegment(RouteSegment):
     L4 consumes a list of these to decide where to generate avoidance waypoints.
     """
 
-    risk_score:    float                             # 0.0 – 1.0
-    hazard_type:   Optional[str] = None             # dominant hazard on this segment
-    aqi_estimate:  Optional[float] = None
+    risk_score:      float                           # 0.0 – 1.0
+    hazard_type:     Optional[str] = None            # dominant hazard on this segment
+    aqi_estimate:    Optional[float] = None
+    pm25_estimate:   Optional[float] = None          # estimated PM2.5 µg/m³ on this segment
+    smoke_dose_ug:   Optional[float] = None          # inhaled PM2.5 dose on this segment (µg)
+
+
+class SmokeDoseReport(BaseModel):
+    """
+    Cumulative smoke dose for an entire trip.
+    The cigarette_equivalents field is the headline metric.
+    """
+
+    total_dose_ug:          float                    # total effective PM2.5 inhaled (µg)
+    cigarette_equivalents:  float                    # dose / 264 — the number everyone remembers
+    profile_used:           str                      # "default" | "child" | "asthma" etc.
+    profile_label:          str                      # "Healthy adult (driving)"
+    peak_pm25_ugm3:         float                    # worst PM2.5 on any segment
+    avg_pm25_ugm3:          float                    # weighted average PM2.5 for the trip
+    time_in_smoke_min:      float                    # minutes spent in PM2.5 > 12 µg/m³
+    health_advisory:        str                      # plain English summary
 
 
 class HazardPolygon(BaseModel):
