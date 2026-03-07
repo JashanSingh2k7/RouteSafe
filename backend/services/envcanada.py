@@ -13,7 +13,7 @@ import httpx
 
 from models.schemas import WindVector
 
-logger = logging.getLogger(_name_)
+logger = logging.getLogger(__name__)
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
