@@ -1,3 +1,5 @@
+# to run: uvicorn main:app --reload --port 8000
+
 # download these packages
 # pip install fastapi uvicorn httpx python-dotenv shapely h3 geopandas pandas numpy supabase psycopg2-binary pydantic
 
