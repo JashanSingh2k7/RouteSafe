@@ -74,10 +74,7 @@ def decode_polyline(encoded: str) -> list[tuple[float, float]]:
     return points
 
 
-def build_segments(
-    points: list[tuple[float, float]],
-    total_duration_min: float,
-) -> list[RouteSegment]:
+def build_segments( points: list[tuple[float, float]], total_duration_min: float, ) -> list[RouteSegment]:
     """
     Convert decoded polyline points into RouteSegment objects.
 
@@ -92,6 +89,7 @@ def build_segments(
     Returns:
         List of RouteSegment objects ready for L3 scoring.
     """
+    
     if len(points) < 2:
         logger.warning("Need at least 2 points to build segments, got %d", len(points))
         return []

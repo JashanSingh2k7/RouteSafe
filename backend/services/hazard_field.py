@@ -212,7 +212,7 @@ def _rasterise_plume(plume: SmokePlume, resolution: int = H3_RESOLUTION) -> list
 
 def _merge_hex_grid(cells: list[HazardCell]) -> dict[str, float]:
     """Merge cells into {h3_index: severity}. Overlaps sum, capped at 1.0."""
-    
+
     grid: dict[str, float] = {}
     for cell in cells:
         grid[cell.h3_index] = min(grid.get(cell.h3_index, 0.0) + cell.severity, MAX_SEVERITY)
@@ -237,6 +237,7 @@ def _overlay_aqi(
 
 def _plumes_to_polygons(plumes: list[SmokePlume]) -> list[HazardPolygon]:
     """Convert internal SmokePlumes to API-facing HazardPolygon schema."""
+    
     polygons = []
     for plume in plumes:
         severity_str = (
