@@ -61,10 +61,13 @@ export default function App() {
         <Map
           scoredSegments={data?.scored_segments}
           hazardPolygons={data?.hazard_polygons}
+          hexGrid={data?.hex_grid}
+          fires={data?.fire_hazards}
           selectedHours={selectedHours}
           hoveredSegment={hoveredSegment}
           onSegmentHover={setHoveredSegment}
         />
+
         <TimeSlider
           selectedHours={selectedHours}
           onChange={setSelectedHours}

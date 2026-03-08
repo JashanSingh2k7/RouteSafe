@@ -95,7 +95,7 @@ async def get_fire_hazards(
 
     Returns:
         List of HazardPoint objects filtered to nominal/high confidence fires.
-
+it
     Raises:
         ValueError:  If the API key is not set.
         httpx.HTTPStatusError: On non-2xx API responses.

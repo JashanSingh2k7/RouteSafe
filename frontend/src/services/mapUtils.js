@@ -14,10 +14,6 @@
 // RISK STYLING — monochrome base, orange/red for danger
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Risk score (0–1) → color string.
- * Gray for safe/moderate, orange for dangerous, red for critical.
- */
 export function riskColor(score) {
   if (score < 0.15) return "#555555";
   if (score < 0.35) return "#777777";
@@ -25,9 +21,6 @@ export function riskColor(score) {
   return "#ef4444";
 }
 
-/**
- * Risk score → human label. Thresholds match route_scorer.py RISK_THRESHOLDS.
- */
 export function riskLabel(score) {
   if (score < 0.15) return "safe";
   if (score < 0.4) return "moderate";
@@ -35,30 +28,15 @@ export function riskLabel(score) {
   return "critical";
 }
 
-/**
- * Plume severity string → fill opacity.
- * More severe plumes render more opaque on the map.
- */
 export function plumeSeverityOpacity(severity) {
   const map = { low: 0.04, moderate: 0.08, high: 0.12, critical: 0.18 };
   return map[severity] || 0.06;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GEOJSON BUILDERS — backend data → Mapbox sources
+// GEOJSON BUILDERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Convert scored_segments array into a GeoJSON FeatureCollection.
- * Each segment becomes a LineString with risk properties attached.
- *
- * Properties are passed through so Mapbox can use them in
- * data-driven styling (e.g. color by risk_score) and popups.
- *
- * Backend fields: index, start_lat, start_lon, end_lat, end_lon,
- *   risk_score, hazard_type, aqi_estimate, distance_km,
- *   travel_time_min, cumulative_time_min
- */
 export function segmentsToGeoJSON(segments) {
   return {
     type: "FeatureCollection",
@@ -84,18 +62,11 @@ export function segmentsToGeoJSON(segments) {
   };
 }
 
-/**
- * Build a single LineString of the full route path.
- * Useful for drawing a route outline underneath the per-segment coloring.
- */
 export function routeToLineGeoJSON(segments) {
   if (!segments.length) return { type: "FeatureCollection", features: [] };
-
   const coords = segments.map((seg) => [seg.start_lon, seg.start_lat]);
-  // Add the final segment's endpoint
   const last = segments[segments.length - 1];
   coords.push([last.end_lon, last.end_lat]);
-
   return {
     type: "FeatureCollection",
     features: [
@@ -108,33 +79,17 @@ export function routeToLineGeoJSON(segments) {
   };
 }
 
-/**
- * Convert hazard_polygons array into a GeoJSON FeatureCollection.
- * Each polygon is a smoke plume with severity and timestamp.
- *
- * If selectedHours is provided, only includes polygons whose valid_at
- * falls within that time horizon (matching L2's TIME_HORIZONS_HOURS).
- * If null/undefined, returns all polygons.
- *
- * Backend fields: hazard_type, severity, valid_at, coordinates, source_fire
- *
- * coordinates come as [[lon, lat], ...] from the backend (GeoJSON order),
- * so they can be used directly — no flipping needed.
- */
 export function polygonsToGeoJSON(polygons, selectedHours = null) {
   let filtered = polygons;
 
   if (selectedHours !== null && selectedHours !== undefined) {
-    // Each polygon has a valid_at timestamp. Filter to only show
-    // polygons at or before the selected time horizon.
-    // We compare hours offset from the earliest valid_at in the set.
     if (polygons.length > 0) {
       const times = polygons.map((p) => new Date(p.valid_at).getTime());
       const earliest = Math.min(...times);
-
       filtered = polygons.filter((poly) => {
-        const hoursFromStart = (new Date(poly.valid_at).getTime() - earliest) / (1000 * 60 * 60);
-        return hoursFromStart <= selectedHours + 0.1; // small tolerance
+        const hoursFromStart =
+          (new Date(poly.valid_at).getTime() - earliest) / (1000 * 60 * 60);
+        return hoursFromStart <= selectedHours + 0.1;
       });
     }
   }
@@ -158,13 +113,6 @@ export function polygonsToGeoJSON(polygons, selectedHours = null) {
   };
 }
 
-/**
- * Convert fire hazard data into a GeoJSON FeatureCollection of Points.
- * Used for fire marker dots on the map.
- *
- * Accepts the fire_hazards from the backend or extracted fire locations.
- * Each fire needs at minimum: lat, lon, severity
- */
 export function firesToGeoJSON(fires) {
   return {
     type: "FeatureCollection",
@@ -184,13 +132,42 @@ export function firesToGeoJSON(fires) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// H3 HEX GRID
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function hexGridToGeoJSON(hexGrid) {
+  const h3 = await import("h3-js");
+
+  const features = [];
+
+  for (const [hexId, severity] of Object.entries(hexGrid)) {
+    try {
+      const boundary = h3.cellToBoundary(hexId).map(([lat, lng]) => [lng, lat]);
+      boundary.push(boundary[0]);
+
+      features.push({
+        type: "Feature",
+        properties: {
+          h3_index: hexId,
+          severity: severity,
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [boundary],
+        },
+      });
+    } catch (e) {
+      // Skip invalid hex IDs
+    }
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAP BOUNDS
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Compute the bounding box of all segments for map.fitBounds().
- * Returns [[minLon, minLat], [maxLon, maxLat]] with padding.
- */
 export function getRouteBounds(segments) {
   let minLat = Infinity;
   let maxLat = -Infinity;
@@ -204,7 +181,6 @@ export function getRouteBounds(segments) {
     maxLon = Math.max(maxLon, seg.start_lon, seg.end_lon);
   }
 
-  // Pad by 5% of the range for breathing room
   const latPad = (maxLat - minLat) * 0.05 + 0.02;
   const lonPad = (maxLon - minLon) * 0.05 + 0.02;
 
