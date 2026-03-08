@@ -2,10 +2,9 @@
  * services/api.js
  *
  * All backend API calls in one place.
- * Vite proxy forwards /score/* and /ingest/* to localhost:8000.
+ * Vite proxy forwards /score/*, /ingest/*, /optimize/* to localhost:8000.
  *
- * Every function here maps directly to an endpoint in routers/scoring.py
- * or routers/ingestion.py on the FastAPI backend.
+ * Every function here maps directly to an endpoint in the FastAPI backend.
  */
 
 const API_BASE = "";
@@ -47,6 +46,53 @@ export async function scoreRoute({
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Scoring failed with status ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /optimize/route — full L1 → L2 → L3 → L4 pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+let optimizeAbort = null;
+
+export async function optimizeRoute({
+  encodedPolyline,
+  totalDurationMin,
+  origin,
+  destination,
+  radiusKm = 100,
+  dayRange = 1,
+  windSampleEvery = 5,
+  aqiSampleEvery = 5,
+  healthProfile = "default",
+  riskThreshold = 0.40,
+}) {
+  if (optimizeAbort) optimizeAbort.abort();
+  optimizeAbort = new AbortController();
+
+  const res = await fetch(`${API_BASE}/optimize/route`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: optimizeAbort.signal,
+    body: JSON.stringify({
+      encoded_polyline: encodedPolyline,
+      total_duration_min: totalDurationMin,
+      origin,
+      destination,
+      radius_km: radiusKm,
+      day_range: dayRange,
+      wind_sample_every: windSampleEvery,
+      aqi_sample_every: aqiSampleEvery,
+      health_profile: healthProfile,
+      risk_threshold: riskThreshold,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Optimization failed with status ${res.status}`);
   }
 
   return res.json();

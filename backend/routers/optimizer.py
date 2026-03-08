@@ -23,9 +23,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from models.schemas import HazardPoint, HazardPolygon, ScoredSegment, SmokeDoseReport, OptimizedRoute
-from services import firms, envcanada, aqi
+from services import firms, envcanada, aqi, snow
 from services.polyline_decoder import decode_polyline, build_segments, compute_route_center
-from services.hazard_field import generate_hazard_field
+from services.hazard_field import generate_hazard_field, generate_snow_grid
 from services.route_scorer import score_route
 from services.optimizer import optimize_route
 from services.smoke_dose import PROFILES
@@ -49,6 +49,7 @@ class OptimizeRequest(BaseModel):
     day_range:          int   = Field(1, description="FIRMS lookback days", ge=1, le=10)
     wind_sample_every:  int   = Field(5, description="Sample wind every N polyline points")
     aqi_sample_every:   int   = Field(5, description="Sample AQI every N polyline points")
+    snow_sample_every:  int   = Field(5, description="Sample snow/ice every N polyline points")
     health_profile:     str   = Field("default", description="Health profile key")
     risk_threshold:     float = Field(0.40, description="Risk score that triggers avoidance", ge=0.1, le=1.0)
 
@@ -59,7 +60,9 @@ class OptimizeResponse(BaseModel):
     scored_segments:    list[ScoredSegment]
     hazard_polygons:    list[HazardPolygon]
     fire_hazards:       list[HazardPoint]
+    snow_hazards:       list[HazardPoint]
     hex_grid:           dict[str, float]
+    snow_grid:          dict[str, float]
     smoke_dose:         SmokeDoseReport
     max_risk_score:     float
     high_risk_count:    int
@@ -77,6 +80,7 @@ class OptimizeResponse(BaseModel):
     total_distance_km:  float
     total_time_min:     float
     fire_count:         int
+    snow_count:         int
     hex_count:          int
     briefing:           str
 
@@ -120,7 +124,7 @@ async def optimize_route_endpoint(body: OptimizeRequest):
 
     # ── 2. L1: Parallel data fetch ───────────────────────────────────────
     try:
-        fire_hazards, wind_vectors, aqi_hazards = await asyncio.gather(
+        fire_hazards, wind_vectors, aqi_hazards, snow_hazards = await asyncio.gather(
             firms.get_fire_hazards(
                 lat=center_lat, lon=center_lon,
                 radius_km=body.radius_km, day_range=body.day_range,
@@ -130,6 +134,9 @@ async def optimize_route_endpoint(body: OptimizeRequest):
             ),
             aqi.get_aqi_hazards_for_route(
                 points=points, sample_every=body.aqi_sample_every,
+            ),
+            snow.get_snow_hazards_for_route(
+                points=points, sample_every=body.snow_sample_every,
             ),
         )
     except ValueError as e:
@@ -141,11 +148,15 @@ async def optimize_route_endpoint(body: OptimizeRequest):
     # ── 3. L2: Hazard field ──────────────────────────────────────────────
     try:
         polygons, flat_grid, grids_by_time = generate_hazard_field(
-            fires=fire_hazards, wind_vectors=wind_vectors, aqi_hazards=aqi_hazards,
+            fires=fire_hazards, wind_vectors=wind_vectors,
+            aqi_hazards=aqi_hazards, snow_hazards=snow_hazards,
         )
     except Exception as e:
         logger.exception("L2 failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Hazard field error: {e}")
+
+    # Build separate snow grid for blue frontend rendering
+    snow_grid = generate_snow_grid(snow_hazards)
 
     # ── 4. L3: Score route ───────────────────────────────────────────────
     try:
@@ -200,7 +211,9 @@ async def optimize_route_endpoint(body: OptimizeRequest):
         scored_segments=score_result["scored_segments"],
         hazard_polygons=polygons,
         fire_hazards=fire_hazards,
+        snow_hazards=snow_hazards,
         hex_grid=flat_grid,
+        snow_grid=snow_grid,
         smoke_dose=dose_report,
         max_risk_score=score_result["max_risk_score"],
         high_risk_count=score_result["high_risk_count"],
@@ -214,6 +227,7 @@ async def optimize_route_endpoint(body: OptimizeRequest):
         total_distance_km=score_result["total_distance_km"],
         total_time_min=score_result["total_time_min"],
         fire_count=len(fire_hazards),
+        snow_count=len(snow_hazards),
         hex_count=len(flat_grid),
         briefing=briefing,
     )

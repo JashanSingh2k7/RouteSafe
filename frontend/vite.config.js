@@ -15,6 +15,7 @@ export default defineConfig({
       '/score': 'http://localhost:8000',
       '/ingest': 'http://localhost:8000',
       '/directions': 'http://localhost:8000',
+      '/optimize': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },
   },

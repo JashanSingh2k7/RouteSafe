@@ -10,7 +10,7 @@ import {
   hexGridToGeoJSON,
   riskColor,
   riskLabel,
-  getRouteBounds,
+  getFullBounds,
 } from "../services/mapUtils";
 
 // Risk score → color ramp for Mapbox interpolation
@@ -37,20 +37,42 @@ const HEX_OUTLINE = "hex-grid-outline";
 const FIRE_SOURCE = "fire-markers";
 const FIRE_LAYER = "fire-markers-circle";
 const FIRE_PULSE = "fire-markers-pulse";
+const WAYPOINT_SOURCE = "waypoint-markers";
+const WAYPOINT_LAYER = "waypoint-markers-circle";
+const WAYPOINT_LABEL = "waypoint-markers-label";
+const SNOW_SOURCE = "snow-grid";
+const SNOW_FILL = "snow-grid-fill";
+const SNOW_OUTLINE = "snow-grid-outline";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
+
+function waypointsToGeoJSON(waypoints) {
+  if (!waypoints?.length) return EMPTY_FC;
+  return {
+    type: "FeatureCollection",
+    features: waypoints.map((wp, i) => ({
+      type: "Feature",
+      properties: { index: i + 1, label: `W${i + 1}` },
+      geometry: {
+        type: "Point",
+        coordinates: [wp.lon, wp.lat],
+      },
+    })),
+  };
+}
 
 export default function Map({
   scoredSegments,
   hazardPolygons,
   hexGrid,
+  snowGrid,
   fires,
+  waypoints,
+  hazardView,
   selectedHours,
   hoveredSegment,
   onSegmentHover,
 }) {
-
-  console.log("🔥 Fires prop in Map component:", fires);
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -140,6 +162,42 @@ export default function Map({
 
       // ── Route segments ─────────────────────────────────────────────
       map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_FC });
+
+      // ── Snow/ice hex grid (blue) ───────────────────────────────────
+      map.addSource(SNOW_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: SNOW_FILL,
+        type: "fill",
+        source: SNOW_SOURCE,
+        paint: {
+          "fill-color": [
+            "interpolate", ["linear"], ["get", "severity"],
+            0,    "rgba(59,130,246,0.0)",
+            0.15, "rgba(147,197,253,0.25)",
+            0.35, "rgba(96,165,250,0.35)",
+            0.6,  "rgba(59,130,246,0.50)",
+            0.85, "rgba(29,78,216,0.65)",
+            1.0,  "rgba(30,58,138,0.80)",
+          ],
+          "fill-opacity": 1,
+        },
+      });
+      map.addLayer({
+        id: SNOW_OUTLINE,
+        type: "line",
+        source: SNOW_SOURCE,
+        paint: {
+          "line-color": [
+            "interpolate", ["linear"], ["get", "severity"],
+            0,    "rgba(59,130,246,0.0)",
+            0.15, "rgba(147,197,253,0.1)",
+            0.35, "rgba(96,165,250,0.15)",
+            0.6,  "rgba(59,130,246,0.25)",
+            1.0,  "rgba(30,58,138,0.35)",
+          ],
+          "line-width": 0.5,
+        },
+      });
       map.addLayer({
         id: ROUTE_CASING,
         type: "line",
@@ -177,6 +235,38 @@ export default function Map({
           "circle-stroke-color": "#fca5a5",
           "circle-stroke-width": 2,
           "circle-opacity": 0.9,
+        },
+      });
+
+      // ── Waypoint markers (L4 avoidance points) ────────────────────
+      map.addSource(WAYPOINT_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: WAYPOINT_LAYER,
+        type: "circle",
+        source: WAYPOINT_SOURCE,
+        paint: {
+          "circle-radius": 7,
+          "circle-color": "#10b981",
+          "circle-stroke-color": "#6ee7b7",
+          "circle-stroke-width": 2,
+          "circle-opacity": 0.9,
+        },
+      });
+      map.addLayer({
+        id: WAYPOINT_LABEL,
+        type: "symbol",
+        source: WAYPOINT_SOURCE,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 10,
+          "text-offset": [0, -1.5],
+          "text-anchor": "bottom",
+          "text-font": ["DIN Pro Medium", "Arial Unicode MS Regular"],
+        },
+        paint: {
+          "text-color": "#6ee7b7",
+          "text-halo-color": "#0f172a",
+          "text-halo-width": 1.5,
         },
       });
 
@@ -235,20 +325,24 @@ export default function Map({
     return () => { map.remove(); mapRef.current = null; readyRef.current = false; };
   }, []);
 
-  // ── Update route ─────────────────────────────────────────────────────────
+  // ── Update route + fit bounds to include fires ───────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
     const map = mapRef.current;
     const geojson = scoredSegments?.length ? segmentsToGeoJSON(scoredSegments) : EMPTY_FC;
     geojson.features.forEach((f, i) => { f.id = i; });
     map.getSource(ROUTE_SOURCE)?.setData(geojson);
+
     if (scoredSegments?.length) {
-      map.fitBounds(getRouteBounds(scoredSegments), {
-        padding: { top: 80, bottom: 80, left: 400, right: 80 },
-        duration: 1200,
-      });
+      const bounds = getFullBounds(scoredSegments, fires, waypoints);
+      if (bounds) {
+        map.fitBounds(bounds, {
+          padding: { top: 80, bottom: 80, left: 400, right: 80 },
+          duration: 1200,
+        });
+      }
     }
-  }, [scoredSegments]);
+  }, [scoredSegments, fires, waypoints]);
 
   // ── Update smoke polygons ────────────────────────────────────────────────
   useEffect(() => {
@@ -267,12 +361,50 @@ export default function Map({
     });
   }, [hexGrid]);
 
-  // ── Update fire markers (from actual fire_hazards data) ──────────────────
+  // ── Update fire markers ──────────────────────────────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
     const geojson = fires?.length ? firesToGeoJSON(fires) : EMPTY_FC;
     mapRef.current.getSource(FIRE_SOURCE)?.setData(geojson);
   }, [fires]);
+
+  // ── Update snow/ice hex grid (blue) ──────────────────────────────────────
+  useEffect(() => {
+    if (!readyRef.current || !mapRef.current) return;
+    if (!snowGrid || Object.keys(snowGrid).length === 0) {
+      mapRef.current.getSource(SNOW_SOURCE)?.setData(EMPTY_FC);
+      return;
+    }
+
+    hexGridToGeoJSON(snowGrid).then((geojson) => {
+      mapRef.current?.getSource(SNOW_SOURCE)?.setData(geojson);
+    });
+  }, [snowGrid]);
+
+  // ── Toggle visibility: fire vs snow layers ───────────────────────────────
+  useEffect(() => {
+    if (!readyRef.current || !mapRef.current) return;
+    const map = mapRef.current;
+    const showFire = hazardView === "fire" || hazardView === "all";
+    const showSnow = hazardView === "snow" || hazardView === "all";
+
+    // Fire/smoke layers
+    [HEX_FILL, HEX_OUTLINE, SMOKE_LAYER, SMOKE_OUTLINE, FIRE_LAYER, FIRE_PULSE].forEach((id) => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", showFire ? "visible" : "none");
+    });
+
+    // Snow layers
+    [SNOW_FILL, SNOW_OUTLINE].forEach((id) => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", showSnow ? "visible" : "none");
+    });
+  }, [hazardView]);
+
+  // ── Update waypoint markers (L4 avoidance points) ────────────────────────
+  useEffect(() => {
+    if (!readyRef.current || !mapRef.current) return;
+    const geojson = waypointsToGeoJSON(waypoints);
+    mapRef.current.getSource(WAYPOINT_SOURCE)?.setData(geojson);
+  }, [waypoints]);
 
   // ── Sidebar hover sync ───────────────────────────────────────────────────
   useEffect(() => {

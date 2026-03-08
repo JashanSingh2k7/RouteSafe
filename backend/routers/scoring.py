@@ -14,9 +14,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from models.schemas import HazardPoint, HazardPolygon, ScoredSegment, SmokeDoseReport
-from services import firms, envcanada, aqi
+from services import firms, envcanada, aqi, snow
 from services.polyline_decoder import decode_polyline, build_segments, compute_route_center
-from services.hazard_field import generate_hazard_field
+from services.hazard_field import generate_hazard_field, generate_snow_grid
 from services.route_scorer import score_route
 from services.smoke_dose import PROFILES
 
@@ -37,7 +37,8 @@ class ScoreRouteRequest(BaseModel):
     day_range:          int   = Field(1, description="FIRMS lookback days (1–10)", ge=1, le=10)
     wind_sample_every:  int   = Field(5, description="Sample wind every N polyline points")
     aqi_sample_every:   int   = Field(5, description="Sample AQI every N polyline points")
-    health_profile:     str   = Field("default", description="Health profile key: default, child, asthma, elderly, pregnant, outdoor_worker")
+    snow_sample_every:  int   = Field(5, description="Sample snow/ice every N polyline points")
+    health_profile:     str   = Field("default", description="Health profile key")
 
 
 class ScoreRouteResponse(BaseModel):
@@ -45,14 +46,17 @@ class ScoreRouteResponse(BaseModel):
     scored_segments:    list[ScoredSegment]
     hazard_polygons:    list[HazardPolygon]
     fire_hazards:       list[HazardPoint]
+    snow_hazards:       list[HazardPoint]
     hex_grid:           dict[str, float]
+    snow_grid:          dict[str, float]
     smoke_dose:         SmokeDoseReport
     max_risk_score:     float
     high_risk_count:    int
-    route_risk_level:   str                         # "safe" | "moderate" | "dangerous" | "critical"
+    route_risk_level:   str
     total_distance_km:  float
     total_time_min:     float
     fire_count:         int
+    snow_count:         int
     hex_count:          int
 
 
@@ -93,12 +97,12 @@ async def get_profiles():
 @router.post(
     "/route",
     response_model=ScoreRouteResponse,
-    summary="Score a route against wildfire and smoke hazards",
+    summary="Score a route against wildfire, smoke, snow, and ice hazards",
     description=(
         "The primary endpoint. Accepts an encoded polyline and health profile, "
-        "runs the full L1→L2→L3 pipeline, and returns risk scores per segment, "
-        "hazard polygons for the map, and a cumulative smoke dose report with "
-        "cigarette-equivalents."
+        "runs the full L1→L2→L3 pipeline including snow/ice detection, and returns "
+        "risk scores per segment, hazard polygons, hex grids (fire + snow), "
+        "and a cumulative smoke dose report."
     ),
 )
 async def score_route_endpoint(body: ScoreRouteRequest):
@@ -123,9 +127,9 @@ async def score_route_endpoint(body: ScoreRouteRequest):
         len(points), len(segments), center_lat, center_lon, body.health_profile,
     )
 
-    # ── 2. L1: Fetch fire, wind, AQI data in parallel ────────────────────
+    # ── 2. L1: Fetch fire, wind, AQI, snow data in parallel ──────────────
     try:
-        fire_hazards, wind_vectors, aqi_hazards = await asyncio.gather(
+        fire_hazards, wind_vectors, aqi_hazards, snow_hazards = await asyncio.gather(
             firms.get_fire_hazards(
                 lat=center_lat,
                 lon=center_lon,
@@ -140,6 +144,10 @@ async def score_route_endpoint(body: ScoreRouteRequest):
                 points=points,
                 sample_every=body.aqi_sample_every,
             ),
+            snow.get_snow_hazards_for_route(
+                points=points,
+                sample_every=body.snow_sample_every,
+            ),
         )
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,20 +156,24 @@ async def score_route_endpoint(body: ScoreRouteRequest):
         raise HTTPException(status_code=502, detail=f"Data ingestion error: {e}")
 
     logger.info(
-        "L1 complete — %d fires, %d wind vectors, %d AQI hazards",
-        len(fire_hazards), len(wind_vectors), len(aqi_hazards),
+        "L1 complete — %d fires, %d wind vectors, %d AQI hazards, %d snow/ice hazards",
+        len(fire_hazards), len(wind_vectors), len(aqi_hazards), len(snow_hazards),
     )
 
-    # ── 3. L2: Build hazard field ─────────────────────────────────────────
+    # ── 3. L2: Build hazard field (includes snow in scoring grid) ─────────
     try:
         polygons, flat_grid, grids_by_time = generate_hazard_field(
             fires=fire_hazards,
             wind_vectors=wind_vectors,
             aqi_hazards=aqi_hazards,
+            snow_hazards=snow_hazards,
         )
     except Exception as e:
         logger.exception("L2 hazard field generation failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Hazard field error: {e}")
+
+    # Build separate snow grid for blue frontend rendering
+    snow_grid = generate_snow_grid(snow_hazards)
 
     # ── 4. L3: Score route + calculate dose ───────────────────────────────
     try:
@@ -188,7 +200,9 @@ async def score_route_endpoint(body: ScoreRouteRequest):
         scored_segments=result["scored_segments"],
         hazard_polygons=polygons,
         fire_hazards=fire_hazards,
+        snow_hazards=snow_hazards,
         hex_grid=flat_grid,
+        snow_grid=snow_grid,
         smoke_dose=dose_report,
         max_risk_score=result["max_risk_score"],
         high_risk_count=result["high_risk_count"],
@@ -196,5 +210,6 @@ async def score_route_endpoint(body: ScoreRouteRequest):
         total_distance_km=result["total_distance_km"],
         total_time_min=result["total_time_min"],
         fire_count=len(fire_hazards),
+        snow_count=len(snow_hazards),
         hex_count=len(flat_grid),
     )

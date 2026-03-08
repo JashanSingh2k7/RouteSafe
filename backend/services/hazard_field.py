@@ -264,6 +264,58 @@ def _overlay_aqi(
     return grid
 
 
+def _overlay_snow(
+    grid: dict[str, float], snow_hazards: list[HazardPoint],
+    resolution: int = H3_RESOLUTION,
+) -> dict[str, float]:
+    """Merge snow/ice hazard readings into the scoring hex grid."""
+    snow_severity_map = {"low": 0.15, "moderate": 0.35, "high": 0.60, "critical": 0.85}
+    for hazard in snow_hazards:
+        severity = snow_severity_map.get(hazard.severity, 0.2)
+        # Black ice is more dangerous per unit area than snow
+        if hazard.hazard_type == "black_ice":
+            severity = min(severity * 1.3, MAX_SEVERITY)
+        radius_km = hazard.spatial_impact_radius or 8.0
+        k = max(1, int(radius_km / 5.16))
+        centre_hex = h3.latlng_to_cell(hazard.lat, hazard.lon, resolution)
+        for hex_id in h3.grid_disk(centre_hex, k):
+            grid[hex_id] = min(grid.get(hex_id, 0.0) + severity, MAX_SEVERITY)
+    return grid
+
+
+def generate_snow_grid(
+    snow_hazards: list[HazardPoint],
+    resolution: int = H3_RESOLUTION,
+) -> dict[str, float]:
+    """
+    Build a standalone snow/ice hex grid for frontend visualization.
+
+    Separate from the fire hex grid so the frontend can render it
+    with blue colors instead of orange/red.
+
+    Returns:
+        {h3_index: severity} — severity 0.0–1.0 for blue color interpolation.
+    """
+    if not snow_hazards:
+        return {}
+
+    snow_severity_map = {"low": 0.15, "moderate": 0.35, "high": 0.60, "critical": 0.85}
+    grid: dict[str, float] = {}
+
+    for hazard in snow_hazards:
+        severity = snow_severity_map.get(hazard.severity, 0.2)
+        if hazard.hazard_type == "black_ice":
+            severity = min(severity * 1.3, MAX_SEVERITY)
+        radius_km = hazard.spatial_impact_radius or 8.0
+        k = max(1, int(radius_km / 5.16))
+        centre_hex = h3.latlng_to_cell(hazard.lat, hazard.lon, resolution)
+        for hex_id in h3.grid_disk(centre_hex, k):
+            grid[hex_id] = min(grid.get(hex_id, 0.0) + severity, MAX_SEVERITY)
+
+    logger.info("Snow grid: %d hexes from %d hazard points.", len(grid), len(snow_hazards))
+    return {k: v for k, v in grid.items() if v >= MIN_SEVERITY_THRESHOLD}
+
+
 def _plumes_to_polygons(plumes: list[SmokePlume]) -> list[HazardPolygon]:
     """Convert internal SmokePlumes to API-facing HazardPolygon schema."""
     
@@ -291,6 +343,7 @@ def generate_hazard_field(
     fires:         list[HazardPoint],
     wind_vectors:  list[WindVector],
     aqi_hazards:   list[HazardPoint],
+    snow_hazards:  list[HazardPoint] = None,
     time_horizons: list[float] = TIME_HORIZONS_HOURS,
 ) -> tuple[list[HazardPolygon], dict[str, float], dict[float, dict[str, float]]]:
     """
@@ -302,6 +355,8 @@ def generate_hazard_field(
             flat_grid     → {hex: peak_severity} across all time steps
             grids_by_time → {hours_ahead: {hex: severity}} for L3 time-aware scoring
     """
+    if snow_hazards is None:
+        snow_hazards = []
     logger.info(
         "generate_hazard_field() — %d fires, %d wind vectors, %d AQI, horizons=%s",
         len(fires), len(wind_vectors), len(aqi_hazards), time_horizons,
@@ -309,8 +364,10 @@ def generate_hazard_field(
     now = datetime.utcnow()
 
     if not fires:
-        logger.info("No fires — overlaying AQI only.")
+        logger.info("No fires — overlaying AQI and snow only.")
         aqi_grid = _overlay_aqi({}, aqi_hazards, now)
+        if snow_hazards:
+            aqi_grid = _overlay_snow(aqi_grid, snow_hazards)
         return [], aqi_grid, {0: aqi_grid}
 
     # ── FIX: fallback to calm wind when wind data is unavailable ──────
@@ -362,6 +419,11 @@ def generate_hazard_field(
 
     # AQI is current conditions → T+0 only
     grids_by_time[0] = _overlay_aqi(grids_by_time.get(0, {}), aqi_hazards, now)
+
+    # Snow/ice is persistent → overlay on ALL time buckets
+    if snow_hazards:
+        for hours in grids_by_time:
+            grids_by_time[hours] = _overlay_snow(grids_by_time[hours], snow_hazards)
 
     # Flat grid = peak severity per hex across all time steps (for frontend)
     flat_grid: dict[str, float] = {}
