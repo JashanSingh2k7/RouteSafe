@@ -7,14 +7,12 @@ POST /optimize/route — runs the full L1→L2→L3→L4 pipeline:
     decode polyline → fetch hazard data → build hazard field →
     score route → generate avoidance waypoints
 
-Returns the original scored route PLUS avoidance waypoints that the
-frontend can feed back into Google Directions to get a safer route.
-
 The frontend flow:
-    1. User enters origin/destination
-    2. Frontend gets directions from Google (via /directions)
-    3. Frontend calls POST /optimize/route with the polyline
-    4. If rerouted=true, frontend re-queries Google Directions
+    1. User enters origin/destination → clicks "Score Route"
+    2. Frontend calls POST /score/route → sees risk level
+    3. If dangerous, user clicks "Optimize Route"
+    4. Frontend calls POST /optimize/route
+    5. If rerouted=true, frontend re-queries Google Directions
        with the returned waypoints and re-scores the new route
 """
 
@@ -24,7 +22,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from models.schemas import HazardPolygon, ScoredSegment, SmokeDoseReport, OptimizedRoute
+from models.schemas import HazardPoint, HazardPolygon, ScoredSegment, SmokeDoseReport, OptimizedRoute
 from services import firms, envcanada, aqi
 from services.polyline_decoder import decode_polyline, build_segments, compute_route_center
 from services.hazard_field import generate_hazard_field
@@ -57,9 +55,11 @@ class OptimizeRequest(BaseModel):
 
 class OptimizeResponse(BaseModel):
     """Full pipeline output including avoidance waypoints."""
-    # Original scored route
+    # Scored route + hazard data (same as ScoreRouteResponse)
     scored_segments:    list[ScoredSegment]
     hazard_polygons:    list[HazardPolygon]
+    fire_hazards:       list[HazardPoint]
+    hex_grid:           dict[str, float]
     smoke_dose:         SmokeDoseReport
     max_risk_score:     float
     high_risk_count:    int
@@ -91,9 +91,8 @@ class OptimizeResponse(BaseModel):
     summary="Score and optimize a route against wildfire hazards",
     description=(
         "Full L1→L2→L3→L4 pipeline. Returns scored segments, hazard polygons, "
-        "smoke dose report, AND avoidance waypoints if any segment exceeds the "
-        "risk threshold. The frontend should re-query Google Directions with "
-        "the waypoints to get the safer route."
+        "fire locations, hex grid, smoke dose report, AND avoidance waypoints "
+        "if any segment exceeds the risk threshold."
     ),
 )
 async def optimize_route_endpoint(body: OptimizeRequest):
@@ -200,6 +199,8 @@ async def optimize_route_endpoint(body: OptimizeRequest):
     return OptimizeResponse(
         scored_segments=score_result["scored_segments"],
         hazard_polygons=polygons,
+        fire_hazards=fire_hazards,
+        hex_grid=flat_grid,
         smoke_dose=dose_report,
         max_risk_score=score_result["max_risk_score"],
         high_risk_count=score_result["high_risk_count"],
