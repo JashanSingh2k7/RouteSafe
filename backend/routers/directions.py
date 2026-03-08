@@ -5,12 +5,11 @@ Proxy for Google Directions API.
 The browser can't call Google Directions directly (no CORS),
 so the frontend calls us and we forward to Google.
 
-GET /directions?origin=Calgary,AB&destination=Banff,AB&alternatives=false&waypoints=51.1,-115.8|51.2,-115.7
+GET /directions?origin=Calgary,AB&destination=Banff,AB&alternatives=false
 """
 
 import os
 import logging
-from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -29,15 +28,13 @@ DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
     description=(
         "Forwards origin/destination to Google Directions and returns "
         "the full response including encoded polyline and duration. "
-        "Also accepts optional waypoints to force detours around hazards. "
         "The frontend uses overview_polyline.points and legs[0].duration.value."
     ),
 )
 async def get_directions(
-    origin:       str           = Query(..., description="Start location", example="Calgary, AB"),
-    destination:  str           = Query(..., description="End location", example="Kamloops, BC"),
-    alternatives: bool          = Query(False, description="Return alternative routes"),
-    waypoints:    Optional[str] = Query(None, description="Pipe-separated lat,lon waypoints to route through"),
+    origin:       str  = Query(..., description="Start location", example="Calgary, AB"),
+    destination:  str  = Query(..., description="End location", example="Banff, AB"),
+    alternatives: bool = Query(False, description="Return alternative routes"),
 ):
     if not GOOGLE_MAPS_KEY:
         raise HTTPException(
@@ -52,14 +49,7 @@ async def get_directions(
         "key": GOOGLE_MAPS_KEY,
     }
 
-    # 🟢 NEW: Inject the safe waypoints if the frontend provided them
-    if waypoints:
-        params["waypoints"] = waypoints
-
-    logger.info(
-        "Proxying directions: %s → %s (alternatives=%s, waypoints=%s)", 
-        origin, destination, alternatives, bool(waypoints)
-    )
+    logger.info("Proxying directions: %s → %s (alternatives=%s)", origin, destination, alternatives)
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
