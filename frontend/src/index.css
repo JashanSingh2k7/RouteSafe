@@ -1,3 +1,30 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@source "../src/**/*.{js,jsx}";
+
+/* Mapbox GL overrides — can't use Tailwind on injected DOM */
+.mapboxgl-popup-content {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+.mapboxgl-popup-tip {
+  border-top-color: #1e293b !important;
+}
+
+.mapboxgl-ctrl-group {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 6px !important;
+}
+
+.mapboxgl-ctrl-group button + button {
+  border-top: 1px solid #334155 !important;
+}
+
+.mapboxgl-ctrl-group button span {
+  filter: invert(0.8);
+}
