@@ -8,6 +8,8 @@ import { fetchRoute, fetchRouteWithWaypoints } from "./services/directions";
 
 export default function App() {
   const [data, setData] = useState(null);
+  const [pendingOptimization, setPendingOptimization] = useState(null);
+
   const [loading, setLoading] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [rerouting, setRerouting] = useState(false);
@@ -15,18 +17,19 @@ export default function App() {
   const [selectedHours, setSelectedHours] = useState(0);
   const [hoveredSegment, setHoveredSegment] = useState(null);
 
-  // Store route params for optimize/reroute steps
   const [lastParams, setLastParams] = useState(null);
   const [lastRoute, setLastRoute] = useState(null);
+  const [hasAppliedReroute, setHasAppliedReroute] = useState(false);
 
-  // ── Step 1: Score Route (L1 → L2 → L3) ──────────────────────────────
   const handleSubmit = useCallback(async (params) => {
     setLoading(true);
     setError(null);
     setData(null);
+    setPendingOptimization(null);
     setSelectedHours(0);
     setLastParams(null);
     setLastRoute(null);
+    setHasAppliedReroute(false);
 
     try {
       let scoreParams;
@@ -35,6 +38,7 @@ export default function App() {
         const route = await fetchRoute(params.origin, params.destination);
         setLastRoute(route);
         setLastParams(params);
+
         scoreParams = {
           encodedPolyline: route.encodedPolyline,
           totalDurationMin: route.totalDurationMin,
@@ -57,12 +61,12 @@ export default function App() {
     }
   }, []);
 
-  // ── Step 2: Optimize Route (L1 → L2 → L3 → L4) ─────────────────────
   const handleOptimize = useCallback(async () => {
     if (!lastParams || !lastRoute) return;
 
     setOptimizing(true);
     setError(null);
+    setPendingOptimization(null);
 
     try {
       const result = await optimizeRoute({
@@ -75,7 +79,10 @@ export default function App() {
         healthProfile: lastParams.healthProfile,
       });
 
-      setData(result);
+      // IMPORTANT:
+      // Do NOT replace the main displayed route yet.
+      // Keep the original route visible until user applies the optimized one.
+      setPendingOptimization(result);
     } catch (err) {
       if (err.name === "AbortError") return;
       console.error("Optimize failed:", err);
@@ -85,25 +92,21 @@ export default function App() {
     }
   }, [lastParams, lastRoute]);
 
-  // ── Step 3: Apply Safer Route (re-fetch Google with waypoints) ───────
   const handleApplyReroute = useCallback(async () => {
-    if (!data?.waypoints?.length || !lastParams) return;
+    if (!pendingOptimization?.waypoints?.length || !lastParams) return;
 
     setRerouting(true);
     setError(null);
 
     try {
-      // Get new route from Google Directions with avoidance waypoints
       const newRoute = await fetchRouteWithWaypoints(
         lastParams.origin,
         lastParams.destination,
-        data.waypoints,
+        pendingOptimization.waypoints,
       );
 
-      // Update stored route for potential further optimization
       setLastRoute(newRoute);
 
-      // Re-score the new route through L1→L2→L3
       const result = await scoreRoute({
         encodedPolyline: newRoute.encodedPolyline,
         totalDurationMin: newRoute.totalDurationMin,
@@ -112,7 +115,15 @@ export default function App() {
         healthProfile: lastParams.healthProfile,
       });
 
-      setData(result);
+      // Only now replace the displayed route
+      setData({
+        ...result,
+        briefing: "Optimized path applied.",
+      });
+
+      // Clear the pending popup/banner after apply
+      setPendingOptimization(null);
+      setHasAppliedReroute(true);
     } catch (err) {
       if (err.name === "AbortError") return;
       console.error("Reroute failed:", err);
@@ -120,21 +131,23 @@ export default function App() {
     } finally {
       setRerouting(false);
     }
-  }, [data, lastParams]);
+  }, [pendingOptimization, lastParams]);
 
-  // Can optimize if we have a scored route with risk and route params
-  const canOptimize = !!(
+  const canOptimize = Boolean(
     data &&
-    lastParams &&
-    lastRoute &&
-    !data.rerouted &&        // not already optimized
-    !data.waypoints          // no waypoints yet (score/route response)
+      lastParams &&
+      lastRoute &&
+      !loading &&
+      !rerouting &&
+      !hasAppliedReroute &&
+      !pendingOptimization
   );
 
   return (
     <div className="flex h-screen w-screen bg-gray-950">
       <SidePanel
         data={data}
+        optimizationResult={pendingOptimization}
         loading={loading}
         optimizing={optimizing}
         rerouting={rerouting}
@@ -153,7 +166,7 @@ export default function App() {
           hazardPolygons={data?.hazard_polygons}
           hexGrid={data?.hex_grid}
           fires={data?.fire_hazards}
-          waypoints={data?.waypoints}
+          waypoints={pendingOptimization?.waypoints}
           selectedHours={selectedHours}
           hoveredSegment={hoveredSegment}
           onSegmentHover={setHoveredSegment}

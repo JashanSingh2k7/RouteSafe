@@ -10,21 +10,31 @@ function formatDuration(min) {
 }
 
 function riskBarColor(score) {
-  if (score < 0.15) return "#22c55e";
-  if (score < 0.30) return "#84cc16";
-  if (score < 0.40) return "#f59e0b";
-  if (score < 0.60) return "#f97316";
-  if (score < 0.80) return "#ef4444";
-  return "#7c2d12";
+  if (score < 0.15) return "#3f3f46";
+  if (score < 0.30) return "#52525b";
+  if (score < 0.40) return "#a16207";
+  if (score < 0.60) return "#c2410c";
+  if (score < 0.80) return "#b91c1c";
+  return "#7f1d1d";
 }
 
-function snowSeverityColor(severity) {
-  const map = { low: "#93c5fd", moderate: "#60a5fa", high: "#3b82f6", critical: "#1e3a8a" };
-  return map[severity] || "#93c5fd";
+function riskBadgeBg(score) {
+  if (score < 0.15) return "#27272a";
+  if (score < 0.40) return "#422006";
+  if (score < 0.70) return "#431407";
+  return "#450a0a";
+}
+
+function riskBadgeText(score) {
+  if (score < 0.15) return "#a1a1aa";
+  if (score < 0.40) return "#fbbf24";
+  if (score < 0.70) return "#fb923c";
+  return "#fca5a5";
 }
 
 export default function SidePanel({
   data,
+  optimizationResult,
   loading,
   optimizing,
   rerouting,
@@ -33,308 +43,178 @@ export default function SidePanel({
   onOptimize,
   onApplyReroute,
   canOptimize,
-  hazardView,
-  onHazardViewChange,
   onSegmentHover,
   hoveredSegment,
 }) {
   const [expandedDose, setExpandedDose] = useState(false);
   const [expandedOptimizer, setExpandedOptimizer] = useState(false);
-  const [expandedSnow, setExpandedSnow] = useState(false);
 
-  const isOptimized = data && ("rerouted" in data);
-  const hasSnow = data?.snow_count > 0 || (data?.snow_hazards?.length > 0);
-  const hasFire = data?.fire_count > 0;
+  const showOptimizeButton = Boolean((canOptimize || optimizing) && data);
+  const showRerouteBanner = Boolean(
+    optimizationResult?.rerouted && optimizationResult?.waypoints?.length > 0
+  );
 
   return (
-    <aside className="w-[380px] h-screen bg-neutral-900 border-r border-gray-800 flex flex-col overflow-y-auto overflow-x-hidden
-      scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+    <aside className="w-[380px] h-screen bg-[#09090b] border-r border-[#1f1f23] flex flex-col overflow-y-auto overflow-x-hidden">
 
-      {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b border-gray-800">
-        <div className="flex items-center gap-2.5">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-500 shrink-0">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
-          </svg>
+      {/* ── Header ── */}
+      <div className="px-4 pt-5 pb-4 border-b border-[#1f1f23]">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-sm bg-[#141416] border border-[#1f1f23] flex items-center justify-center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#71717a]">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
+          </div>
           <div>
-            <span className="block text-base font-bold tracking-tight text-gray-100">RouteSafe</span>
-            <span className="block text-[10px] text-gray-500 font-normal uppercase tracking-wide">
-              Wildfire-Aware Routing
+            <span className="block text-[14px] font-bold tracking-tight text-[#e4e4e7]">RouteSafe</span>
+            <span className="block text-[9px] text-[#52525b] font-semibold uppercase tracking-[0.15em]">
+              Hazard-Aware Routing
             </span>
           </div>
         </div>
       </div>
 
-      {/* Route Input */}
+      {/* ── Route Input ── */}
       <RouteInput onSubmit={onSubmit} loading={loading} />
 
-      {/* Error */}
+      {/* ── Error ── */}
       {error && (
-        <div className="mx-4 mt-3 p-3 bg-red-500/10 border border-red-500/25 rounded text-red-300 text-xs flex items-start gap-2">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 mt-0.5">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="15" y1="9" x2="9" y2="15" />
-            <line x1="9" y1="9" x2="15" y2="15" />
-          </svg>
-          {error}
+        <div className="mx-4 mt-3 p-3 bg-[#1c1917] border border-[#292524] rounded-sm text-[#fca5a5] text-[11px] flex items-start gap-2">
+          <span className="text-[#ef4444] shrink-0 mt-px font-data text-[10px]">ERR</span>
+          <span className="text-[#a1a1aa]">{error}</span>
         </div>
       )}
 
-      {/* Results */}
+      {/* ── Results ── */}
       {data && (
         <div className="flex-1 flex flex-col">
 
-          {/* ── Hazard View Toggle ────────────────────────────────────── */}
-          {(hasFire || hasSnow) && (
-            <div className="mx-4 mt-3">
-              <div className="flex bg-gray-800 rounded p-0.5">
-                {[
-                  { key: "all", label: "All" },
-                  { key: "fire", label: "Fire / Smoke" },
-                  { key: "snow", label: "Snow / Ice" },
-                ].map(({ key, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => onHazardViewChange(key)}
-                    className={`flex-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide rounded transition-colors
-                      ${hazardView === key
-                        ? key === "snow"
-                          ? "bg-blue-600 text-white"
-                          : key === "fire"
-                            ? "bg-amber-600 text-white"
-                            : "bg-gray-600 text-white"
-                        : "text-gray-400 hover:text-gray-300"
-                      }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Optimize Route Button ── */}
-          {canOptimize && data.max_risk_score > 0 && (
-            <div className="mx-4 mt-3">
-              <button
-                onClick={onOptimize}
-                disabled={optimizing}
-                className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 disabled:opacity-50
-                  text-white font-semibold text-sm rounded flex items-center justify-center gap-2
-                  transition-colors"
-              >
+          {/* Optimize button */}
+          {showOptimizeButton && data.max_risk_score > 0 && (
+            <div className="mx-4 mt-4">
+              <button onClick={onOptimize} disabled={optimizing}
+                className="w-full py-2.5 px-4 bg-[#1f1f23] hover:bg-[#27272a] border border-[#3f3f46] disabled:opacity-60
+                  text-[#e4e4e7] font-semibold text-[12px] rounded-sm flex items-center justify-center gap-2
+                  transition-all tracking-wide uppercase">
                 {optimizing ? (
                   <span className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 border-2 border-white/25 border-t-white rounded-full animate-spin" />
-                    Optimizing...
+                    <span className="w-3 h-3 border-2 border-[#52525b] border-t-[#e4e4e7] rounded-full animate-spin" />
+                    <span className="text-[#a1a1aa] normal-case tracking-normal">Optimizing...</span>
                   </span>
                 ) : (
-                  <>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M9 18l6-6-6-6" />
-                    </svg>
-                    Optimize Route
-                  </>
+                  <span>Optimize Route</span>
                 )}
               </button>
-              {data.high_risk_count > 0 && (
-                <p className="text-[10px] text-gray-500 text-center mt-1.5">
-                  {data.high_risk_count} segment{data.high_risk_count !== 1 ? "s" : ""} flagged — find a safer path
+              {data.high_risk_count > 0 && !optimizing && (
+                <p className="text-[9px] text-[#52525b] text-center mt-2 tracking-wide">
+                  {data.high_risk_count} segment{data.high_risk_count !== 1 ? "s" : ""} flagged
                 </p>
               )}
             </div>
           )}
 
-          {/* ── Reroute Banner ── */}
-          {isOptimized && data.rerouted && data.waypoints?.length > 0 && (
-            <div className="mx-4 mt-3 p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-lg">
+          {/* Reroute banner */}
+          {showRerouteBanner && (
+            <div className="mx-4 mt-4 p-3 bg-[#0f0f11] border border-[#1f1f23] rounded-sm">
               <div className="flex items-center gap-2 mb-2">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400 shrink-0">
-                  <path d="M9 18l6-6-6-6" />
-                </svg>
-                <span className="text-emerald-300 text-xs font-semibold uppercase tracking-wide">
-                  Safer Route Available
+                <div className="w-1.5 h-1.5 rounded-full bg-[#4ade80]" />
+                <span className="text-[#a1a1aa] text-[10px] font-semibold uppercase tracking-[0.12em]">
+                  Safer Route Found
                 </span>
               </div>
-              <p className="text-gray-400 text-[11px] leading-relaxed mb-3">
-                {data.briefing}
+              <p className="text-[#63636b] text-[11px] leading-relaxed mb-3">
+                {optimizationResult?.briefing || "An optimized route is available."}
               </p>
-              <button
-                onClick={onApplyReroute}
-                disabled={rerouting}
-                className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50
-                  text-white text-xs font-semibold rounded flex items-center justify-center gap-2
-                  transition-colors"
-              >
+              <button onClick={onApplyReroute} disabled={rerouting}
+                className="w-full py-2 px-3 bg-[#1f1f23] hover:bg-[#27272a] border border-[#3f3f46] disabled:opacity-50
+                  text-[#e4e4e7] text-[11px] font-semibold rounded-sm flex items-center justify-center gap-2
+                  transition-colors tracking-wide uppercase">
                 {rerouting ? (
                   <span className="flex items-center gap-2">
-                    <span className="w-3 h-3 border-2 border-white/25 border-t-white rounded-full animate-spin" />
-                    Applying...
+                    <span className="w-3 h-3 border-2 border-[#52525b] border-t-[#e4e4e7] rounded-full animate-spin" />
+                    <span className="normal-case tracking-normal text-[#a1a1aa]">Applying...</span>
                   </span>
                 ) : (
-                  <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    Apply Safer Route
-                  </>
+                  <span>Apply Route</span>
                 )}
               </button>
             </div>
           )}
 
-          {/* ── Clean route after L4 ── */}
-          {isOptimized && !data.rerouted && (
-            <div className="mx-4 mt-3 p-3 bg-gray-800/50 border border-gray-700/50 rounded-lg">
-              <div className="flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-green-400 shrink-0">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <span className="text-gray-300 text-xs">
-                  {data.briefing || "Route is within acceptable risk levels."}
-                </span>
-              </div>
+          {/* ── Risk Summary ── */}
+          <div className="p-4 border-b border-[#1f1f23]">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#52525b]">Risk Summary</h3>
+              <span className="font-data text-[10px] text-[#52525b]">
+                {(data.max_risk_score * 100).toFixed(0)}% peak
+              </span>
             </div>
-          )}
 
-          {/* Risk Summary */}
-          <div className="p-4 border-b border-gray-800">
-            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 mb-3">
-              Risk Summary
-            </h3>
-
-            <div className="flex items-center gap-3 mb-3">
-              <span
-                className="px-3 py-1 rounded text-xs font-semibold uppercase tracking-wide"
-                style={{
-                  background: riskColor(data.max_risk_score),
-                  color: data.max_risk_score >= 0.4 ? "#fff" : "#0f172a",
-                }}
-              >
+            {/* Risk badge */}
+            <div className="flex items-center gap-3 mb-4">
+              <span className="px-3 py-1 rounded-sm text-[10px] font-bold uppercase tracking-[0.1em] font-data"
+                style={{ background: riskBadgeBg(data.max_risk_score), color: riskBadgeText(data.max_risk_score) }}>
                 {riskLabel(data.max_risk_score)}
               </span>
-              <span className="text-gray-400 text-xs">
-                {(data.max_risk_score * 100).toFixed(0)}% peak risk
-              </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            {/* Stats grid */}
+            <div className="grid grid-cols-2 gap-px bg-[#1f1f23] rounded-sm overflow-hidden">
               {[
-                { value: data.fire_count, label: "Active fires" },
-                { value: data.snow_count ?? 0, label: "Snow/ice zones" },
-                { value: data.high_risk_count, label: "Flagged segs" },
-                { value: formatDuration(data.total_time_min), label: "Duration" },
-                { value: `${data.total_distance_km.toFixed(0)} km`, label: "Distance" },
-              ].filter((s) => s.value !== undefined).map((s) => (
-                <div key={s.label} className="bg-gray-900 rounded p-2.5">
-                  <span className="block text-sm font-semibold tabular-nums text-gray-100">{s.value}</span>
-                  <span className="block text-[10px] text-gray-500">{s.label}</span>
+                { value: data.fire_count, label: "FIRES" },
+                { value: data.high_risk_count, label: "FLAGGED" },
+                { value: `${data.total_distance_km.toFixed(0)}km`, label: "DISTANCE" },
+                { value: formatDuration(data.total_time_min), label: "DURATION" },
+              ].map((s) => (
+                <div key={s.label} className="bg-[#0f0f11] p-3">
+                  <span className="block text-[15px] font-bold font-data text-[#e4e4e7] tabular-nums">{s.value}</span>
+                  <span className="block text-[8px] font-semibold text-[#3f3f46] uppercase tracking-[0.15em] mt-0.5">{s.label}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Snow / Ice Conditions */}
-          {hasSnow && (
-            <div className="p-4 border-b border-gray-800">
-              <button
-                onClick={() => setExpandedSnow(!expandedSnow)}
-                className="w-full flex items-center gap-2 text-left bg-transparent border-none cursor-pointer"
-              >
-                <h3 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 flex items-center gap-2">
-                  <span>{expandedSnow ? "▾" : "▸"}</span>
-                  Snow / Ice Conditions
-                  <span className="font-normal text-blue-400">
-                    {data.snow_hazards?.length || data.snow_count || 0} zone{(data.snow_hazards?.length || 0) !== 1 ? "s" : ""}
-                  </span>
-                </h3>
-              </button>
-
-              {expandedSnow && data.snow_hazards?.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {/* Group by type */}
-                  {(() => {
-                    const byType = {};
-                    for (const h of data.snow_hazards) {
-                      const key = h.hazard_type === "black_ice" ? "Black Ice" : "Snow";
-                      if (!byType[key]) byType[key] = { count: 0, severities: {}, temps: [] };
-                      byType[key].count++;
-                      byType[key].severities[h.severity] = (byType[key].severities[h.severity] || 0) + 1;
-                      if (h.metadata?.temperature_c != null) byType[key].temps.push(h.metadata.temperature_c);
-                    }
-                    return Object.entries(byType).map(([type, info]) => (
-                      <div key={type} className="bg-gray-900 rounded p-2.5 text-xs">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-gray-200 font-medium">{type}</span>
-                          <span className="text-gray-500">{info.count} reading{info.count !== 1 ? "s" : ""}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {Object.entries(info.severities).map(([sev, count]) => (
-                            <span
-                              key={sev}
-                              className="px-2 py-0.5 rounded text-[10px] font-medium uppercase"
-                              style={{ background: snowSeverityColor(sev), color: sev === "critical" || sev === "high" ? "#fff" : "#1e3a5f" }}
-                            >
-                              {sev} ({count})
-                            </span>
-                          ))}
-                        </div>
-                        {info.temps.length > 0 && (
-                          <div className="mt-1.5 text-[10px] text-gray-500">
-                            Temp range: {Math.min(...info.temps).toFixed(0)}°C to {Math.max(...info.temps).toFixed(0)}°C
-                          </div>
-                        )}
-                      </div>
-                    ));
-                  })()}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Smoke Dose */}
+          {/* ── Smoke Dose ── */}
           {data.smoke_dose && (
-            <div className="p-4 border-b border-gray-800">
-              <h3 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 mb-3 flex items-center">
-                Smoke Exposure
-                <span className="ml-auto text-[10px] font-normal normal-case tracking-normal text-gray-500">
-                  {data.smoke_dose.profile_label}
-                </span>
-              </h3>
-
-              <div className="flex items-baseline gap-2 mb-3 p-3 bg-gray-900 rounded-lg border-l-[3px] border-amber-500">
-                <span className="text-3xl font-bold tabular-nums text-amber-500 leading-none">
-                  {data.smoke_dose.cigarette_equivalents.toFixed(1)}
-                </span>
-                <span className="text-xs text-gray-400">cigarette equivalents</span>
+            <div className="p-4 border-b border-[#1f1f23]">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#52525b]">Smoke Exposure</h3>
+                <span className="text-[9px] text-[#3f3f46]">{data.smoke_dose.profile_label}</span>
               </div>
 
-              <div className="flex gap-1.5">
+              {/* Cigarette metric */}
+              <div className="flex items-baseline gap-2 mb-4 p-3 bg-[#0f0f11] border-l-2 border-[#a16207] rounded-sm">
+                <span className="text-[28px] font-bold font-data tabular-nums text-[#e4e4e7] leading-none">
+                  {data.smoke_dose.cigarette_equivalents.toFixed(1)}
+                </span>
+                <span className="text-[10px] text-[#52525b]">cigarette eq.</span>
+              </div>
+
+              {/* Dose stats */}
+              <div className="grid grid-cols-3 gap-px bg-[#1f1f23] rounded-sm overflow-hidden">
                 {[
-                  { val: data.smoke_dose.peak_pm25_ugm3.toFixed(0), unit: "µg/m³", label: "Peak PM2.5" },
-                  { val: data.smoke_dose.avg_pm25_ugm3.toFixed(0), unit: "µg/m³", label: "Avg PM2.5" },
-                  { val: data.smoke_dose.time_in_smoke_min.toFixed(0), unit: "min", label: "In smoke" },
+                  { val: data.smoke_dose.peak_pm25_ugm3.toFixed(0), label: "PEAK" },
+                  { val: data.smoke_dose.avg_pm25_ugm3.toFixed(0), label: "AVG" },
+                  { val: `${data.smoke_dose.time_in_smoke_min.toFixed(0)}m`, label: "IN SMOKE" },
                 ].map((d) => (
-                  <div key={d.label} className="flex-1 bg-gray-900 rounded p-2 text-center">
-                    <span className="block text-sm font-semibold tabular-nums text-gray-100">{d.val}</span>
-                    <span className="block text-[9px] text-gray-500">{d.unit}</span>
-                    <span className="block text-[9px] text-gray-500 mt-0.5">{d.label}</span>
+                  <div key={d.label} className="bg-[#0f0f11] p-2.5 text-center">
+                    <span className="block text-[13px] font-bold font-data tabular-nums text-[#a1a1aa]">{d.val}</span>
+                    <span className="block text-[7px] font-semibold text-[#3f3f46] uppercase tracking-[0.15em] mt-0.5">{d.label}</span>
                   </div>
                 ))}
               </div>
 
+              {/* Advisory */}
               {data.smoke_dose.health_advisory && (
                 <>
-                  <button
-                    onClick={() => setExpandedDose(!expandedDose)}
-                    className="mt-2 text-amber-400 text-[11px] font-medium bg-transparent border-none cursor-pointer hover:opacity-80 transition-opacity"
-                  >
-                    {expandedDose ? "▾" : "▸"} Health Advisory
+                  <button onClick={() => setExpandedDose(!expandedDose)}
+                    className="mt-3 text-[#52525b] text-[10px] font-medium bg-transparent border-none cursor-pointer hover:text-[#71717a] transition-colors tracking-wide uppercase">
+                    {expandedDose ? "- " : "+ "}Advisory
                   </button>
                   {expandedDose && (
-                    <div className="mt-2 p-3 bg-amber-500/5 border border-amber-500/15 rounded text-gray-400 text-xs leading-relaxed">
+                    <div className="mt-2 p-3 bg-[#0f0f11] border border-[#1f1f23] rounded-sm text-[#63636b] text-[11px] leading-relaxed">
                       {data.smoke_dose.health_advisory}
                     </div>
                   )}
@@ -343,39 +223,35 @@ export default function SidePanel({
             </div>
           )}
 
-          {/* L4 Optimizer Details */}
-          {isOptimized && data.clusters_found > 0 && (
-            <div className="p-4 border-b border-gray-800">
-              <button
-                onClick={() => setExpandedOptimizer(!expandedOptimizer)}
-                className="w-full flex items-center gap-2 text-left bg-transparent border-none cursor-pointer"
-              >
-                <h3 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 flex items-center gap-2">
-                  <span>{expandedOptimizer ? "▾" : "▸"}</span>
-                  Optimizer Details
-                  <span className="font-normal text-gray-600">
-                    {data.clusters_resolved}/{data.clusters_found} resolved
+          {/* ── Optimizer Details ── */}
+          {optimizationResult?.clusters_found > 0 && (
+            <div className="p-4 border-b border-[#1f1f23]">
+              <button onClick={() => setExpandedOptimizer(!expandedOptimizer)}
+                className="w-full flex items-center gap-2 text-left bg-transparent border-none cursor-pointer">
+                <h3 className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#52525b] flex items-center gap-2">
+                  <span className="font-data">{expandedOptimizer ? "-" : "+"}</span>
+                  Optimizer
+                  <span className="font-data font-normal text-[#3f3f46]">
+                    {optimizationResult.clusters_resolved}/{optimizationResult.clusters_found}
                   </span>
                 </h3>
               </button>
-
               {expandedOptimizer && (
                 <div className="mt-3 space-y-2">
-                  {data.avoidance_details?.map((d, i) => (
-                    <div key={i} className="bg-gray-900 rounded p-2.5 text-xs">
+                  {optimizationResult.avoidance_details?.map((d, i) => (
+                    <div key={i} className="bg-[#0f0f11] border border-[#1f1f23] rounded-sm p-2.5">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-gray-300 font-medium">
-                          Segments {d.cluster_start}–{d.cluster_end}
+                        <span className="text-[#a1a1aa] text-[11px] font-data">
+                          seg {d.cluster_start}–{d.cluster_end}
                         </span>
-                        <span className="text-gray-500">
-                          {d.cluster_peak_risk ? `${(d.cluster_peak_risk * 100).toFixed(0)}% peak` : ""}
+                        <span className="text-[#3f3f46] text-[10px] font-data">
+                          {d.cluster_peak_risk ? `${(d.cluster_peak_risk * 100).toFixed(0)}%` : ""}
                         </span>
                       </div>
-                      <div className="flex gap-3 text-[10px] text-gray-500">
-                        <span>Detour: {d.detour_km?.toFixed(1)} km</span>
-                        <span>
-                          Severity: {d.original_severity_sum?.toFixed(1)} → {d.new_severity_sum?.toFixed(1)}
-                        </span>
+                      <div className="flex gap-4 text-[9px] text-[#3f3f46] font-data">
+                        <span>+{d.detour_km?.toFixed(0)}km</span>
+                        <span>{d.original_severity_sum?.toFixed(1)} &rarr; {d.new_severity_sum?.toFixed(1)}</span>
+                        {d.improvement_pct && <span>{d.improvement_pct}% better</span>}
                       </div>
                     </div>
                   ))}
@@ -384,64 +260,57 @@ export default function SidePanel({
             </div>
           )}
 
-          {/* Segment List */}
-          <div className="p-4 pb-2">
-            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 mb-3 flex items-center gap-2">
-              Segments
-              <span className="font-normal text-gray-600">{data.scored_segments.length}</span>
-            </h3>
+          {/* ── Segments ── */}
+          {data.scored_segments?.length > 0 && (
+            <div className="p-4 flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#52525b]">Segments</h3>
+                <span className="text-[9px] font-data text-[#3f3f46]">{data.scored_segments.length}</span>
+              </div>
 
-            <div className="max-h-[280px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
-              {data.scored_segments.map((seg) => {
-                const isHovered = hoveredSegment === seg.index;
-                const pct = (seg.risk_score * 100).toFixed(0);
-                return (
-                  <div
-                    key={seg.index}
-                    className={`flex items-center gap-2 py-1.5 px-1.5 rounded transition-colors cursor-default
-                      ${isHovered ? "bg-gray-800" : "hover:bg-gray-800/50"}`}
-                    onMouseEnter={() => onSegmentHover?.(seg.index)}
-                    onMouseLeave={() => onSegmentHover?.(null)}
-                  >
-                    <span className="text-[10px] text-gray-500 font-mono font-medium w-7 shrink-0">
-                      #{seg.index}
-                    </span>
-                    <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-[width] duration-300"
-                        style={{
-                          width: `${Math.max(seg.risk_score * 100, 2)}%`,
-                          background: riskBarColor(seg.risk_score),
-                        }}
-                      />
+              <div className="space-y-px">
+                {data.scored_segments.map((seg) => {
+                  const isHovered = hoveredSegment === seg.index;
+                  const pct = (seg.risk_score * 100).toFixed(0);
+                  return (
+                    <div key={seg.index}
+                      className={`flex items-center gap-2 py-1.5 px-2 rounded-sm transition-colors cursor-default
+                        ${isHovered ? "bg-[#1a1a1d]" : "hover:bg-[#0f0f11]"}`}
+                      onMouseEnter={() => onSegmentHover?.(seg.index)}
+                      onMouseLeave={() => onSegmentHover?.(null)}>
+                      <span className="text-[9px] text-[#3f3f46] font-data font-medium w-6 shrink-0 tabular-nums">
+                        {seg.index}
+                      </span>
+                      <div className="flex-1 h-[3px] bg-[#141416] rounded-sm overflow-hidden">
+                        <div className="h-full rounded-sm transition-[width] duration-300"
+                          style={{
+                            width: `${Math.max(seg.risk_score * 100, 3)}%`,
+                            background: riskBarColor(seg.risk_score),
+                          }} />
+                      </div>
+                      <span className="text-[10px] font-data font-semibold tabular-nums w-8 text-right shrink-0"
+                        style={{ color: riskBarColor(seg.risk_score) }}>
+                        {pct}%
+                      </span>
                     </div>
-                    <span
-                      className="text-[11px] font-semibold tabular-nums w-8 text-right shrink-0"
-                      style={{ color: riskBarColor(seg.risk_score) }}
-                    >
-                      {pct}%
-                    </span>
-                    <span className="text-[10px] text-gray-500 font-mono w-[72px] text-right shrink-0">
-                      {seg.pm25_estimate ? `${seg.pm25_estimate} µg/m³` : "clean"}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Empty state */}
+      {/* ── Empty state ── */}
       {!data && !loading && !error && (
-        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center text-gray-500 text-xs gap-3">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="opacity-30">
-            <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-          </svg>
-          <p>
-            Enter an origin and destination, then hit{" "}
-            <span className="text-gray-300 font-medium">Score Route</span> to analyze
-            wildfire, smoke, snow, and ice hazards along your route.
+        <div className="flex-1 flex flex-col items-center justify-center px-10 text-center gap-4">
+          <div className="w-10 h-10 rounded-sm bg-[#0f0f11] border border-[#1f1f23] flex items-center justify-center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-[#3f3f46]">
+              <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            </svg>
+          </div>
+          <p className="text-[#3f3f46] text-[11px] leading-relaxed">
+            Enter origin and destination to analyze wildfire and smoke hazards along your route.
           </p>
         </div>
       )}
