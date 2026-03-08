@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 load_dotenv()  # MUST be before router imports so env vars are available
 
-from routers import ingestion, scoring, directions
+from routers import ingestion, scoring, directions, optimizer
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -64,7 +64,7 @@ app.include_router(ingestion.router, prefix="/ingest", tags=["L1 — Ingestion"]
 app.include_router(scoring.router,   prefix="/score",  tags=["L3 — Risk Scorer"])
 app.include_router(directions.router, prefix="/directions", tags=["Directions"])
 # app.include_router(hazard.router,    prefix="/hazard",   tags=["L2 — Hazard Field"])
-# app.include_router(optimizer.router, prefix="/optimize", tags=["L4 — Route Optimizer"])
+app.include_router(optimizer.router, prefix="/optimize", tags=["L4 — Route Optimizer"])
 
 
 # ── Health & root ─────────────────────────────────────────────────────────────
@@ -92,3 +92,4 @@ async def global_exception_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
