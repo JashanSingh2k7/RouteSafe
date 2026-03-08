@@ -62,7 +62,6 @@ FRP_SEVERITY_MAX = 500.0
 TIME_DECAY_RATE = 0.15
 DISTANCE_DECAY_RATE = 0.04
 
-# Minimum severity floor per tier — a detected fire is ALWAYS a hazard.
 SEVERITY_FLOOR = {
     "low":      0.15,
     "moderate": 0.35,
@@ -70,7 +69,7 @@ SEVERITY_FLOOR = {
     "critical": 0.85,
 }
 
-# Calm wind fallback when Open-Meteo wind data is unavailable.
+# Calm wind fallback — produces roughly circular plumes with slight drift
 CALM_WIND: dict = {"speed_kmh": 5.0, "direction_deg": 0.0, "gusts_kmh": None}
 
 
@@ -105,6 +104,20 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         * math.sin(dlon / 2) ** 2
     )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _interpolate_wind_safe(lat: float, lon: float, wind_vectors: list[WindVector]) -> dict:
+    """
+    Safely interpolate wind at a location. Returns CALM_WIND if interpolation
+    fails for any reason (no vectors, too far, etc).
+    """
+    if not wind_vectors:
+        return CALM_WIND
+    try:
+        return interpolate_wind(lat, lon, wind_vectors, n_nearest=3)
+    except (ValueError, Exception) as e:
+        logger.debug("Wind interpolation failed at (%.4f, %.4f): %s — using calm wind.", lat, lon, e)
+        return CALM_WIND
 
 
 def _generate_plume(fire, wind, hours_ahead, now, severity_base):
@@ -192,6 +205,10 @@ def _merge_hex_grid(cells):
 
 
 def _overlay_aqi(grid, aqi_hazards, now, resolution=H3_RESOLUTION):
+    """
+    Merge AQI smoke readings into the hex grid.
+    AQI is ground-truth — smoke that's already there, not predicted.
+    """
     aqi_severity_map = {"low": 0.1, "moderate": 0.3, "high": 0.6, "critical": 0.9}
     for hazard in aqi_hazards:
         severity = aqi_severity_map.get(hazard.severity, 0.2)
@@ -236,30 +253,25 @@ def generate_hazard_field(
     )
     now = datetime.utcnow()
 
+    # ── No fires: AQI overlay only ────────────────────────────────────────
+    # AQI is ground-truth smoke, applies to ALL time horizons since it's
+    # already in the air. A segment 4 hours into the trip still drives
+    # through the same AQI reading.
     if not fires:
         logger.info("No fires — overlaying AQI only.")
         aqi_grid = _overlay_aqi({}, aqi_hazards, now)
-        return [], aqi_grid, {0: aqi_grid}
+        # Same AQI grid for every time horizon — smoke is already there
+        grids_by_time = {h: dict(aqi_grid) for h in time_horizons}
+        return [], aqi_grid, grids_by_time
 
-    # Fallback to calm wind when wind data is unavailable
-    use_calm_wind = False
-    if not wind_vectors:
-        logger.warning("No wind vectors — using calm-wind fallback (circular plumes).")
-        use_calm_wind = True
-
+    # ── Build plumes per fire per time horizon ────────────────────────────
     all_plumes = []
     cells_by_time = {h: [] for h in time_horizons}
 
     for fire in fires:
-        if use_calm_wind:
-            wind = CALM_WIND
-        else:
-            try:
-                wind = interpolate_wind(fire.lat, fire.lon, wind_vectors, n_nearest=3)
-            except ValueError:
-                wind = CALM_WIND
-
+        wind = _interpolate_wind_safe(fire.lat, fire.lon, wind_vectors)
         severity_base = _frp_to_severity(fire)
+
         logger.info(
             "Fire (%.4f, %.4f) — severity=%.3f (tier=%s, frp=%s), wind=%.1f km/h from %.1f°",
             fire.lat, fire.lon, severity_base, fire.severity,
@@ -272,12 +284,20 @@ def generate_hazard_field(
             all_plumes.append(plume)
             cells_by_time[hours].extend(_rasterise_plume(plume))
 
+    # ── Build per-time grids ──────────────────────────────────────────────
     grids_by_time = {}
     for hours, cells in cells_by_time.items():
         grids_by_time[hours] = _merge_hex_grid(cells)
 
-    grids_by_time[0] = _overlay_aqi(grids_by_time.get(0, {}), aqi_hazards, now)
+    # ── Overlay AQI on ALL time buckets ───────────────────────────────────
+    # AQI is measured smoke that's already present. It doesn't disappear
+    # at T+2h just because our fire plumes change shape.
+    for hours in time_horizons:
+        grids_by_time[hours] = _overlay_aqi(
+            grids_by_time.get(hours, {}), aqi_hazards, now,
+        )
 
+    # ── Flat grid: peak severity across all time steps ────────────────────
     flat_grid = {}
     for t_grid in grids_by_time.values():
         for hex_id, sev in t_grid.items():

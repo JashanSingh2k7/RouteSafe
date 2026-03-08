@@ -94,29 +94,34 @@ export function getRouteBounds(segments) {
 }
 
 export function getFullBounds(segments, fires, waypoints) {
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  if (segments?.length) {
-    for (const seg of segments) {
-      minLat = Math.min(minLat, seg.start_lat, seg.end_lat);
-      maxLat = Math.max(maxLat, seg.start_lat, seg.end_lat);
-      minLon = Math.min(minLon, seg.start_lon, seg.end_lon);
-      maxLon = Math.max(maxLon, seg.start_lon, seg.end_lon);
-    }
+  let minLat = Infinity, maxLat = -Infinity;
+  let minLon = Infinity, maxLon = -Infinity;
+
+  const extend = (lat, lon) => {
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+  };
+
+  for (const seg of (segments || [])) {
+    extend(seg.start_lat, seg.start_lon);
+    extend(seg.end_lat, seg.end_lon);
   }
-  if (fires?.length) {
-    for (const fire of fires) {
-      minLat = Math.min(minLat, fire.lat); maxLat = Math.max(maxLat, fire.lat);
-      minLon = Math.min(minLon, fire.lon); maxLon = Math.max(maxLon, fire.lon);
-    }
+  for (const fire of (fires || [])) {
+    extend(fire.lat, fire.lon);
   }
-  if (waypoints?.length) {
-    for (const wp of waypoints) {
-      minLat = Math.min(minLat, wp.lat); maxLat = Math.max(maxLat, wp.lat);
-      minLon = Math.min(minLon, wp.lon); maxLon = Math.max(maxLon, wp.lon);
-    }
+  for (const wp of (waypoints || [])) {
+    extend(wp.lat, wp.lon);
   }
+
   if (minLat === Infinity) return null;
-  const latPad = (maxLat - minLat) * 0.08 + 0.02;
-  const lonPad = (maxLon - minLon) * 0.08 + 0.02;
-  return [[minLon - lonPad, minLat - latPad], [maxLon + lonPad, maxLat + latPad]];
+
+  const latPad = (maxLat - minLat) * 0.05 + 0.02;
+  const lonPad = (maxLon - minLon) * 0.05 + 0.02;
+
+  return [
+    [minLon - lonPad, minLat - latPad],
+    [maxLon + lonPad, maxLat + latPad],
+  ];
 }

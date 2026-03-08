@@ -6,7 +6,7 @@ export default function RouteInput({ onSubmit, loading }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [radiusKm, setRadiusKm] = useState(100);
-  const [dayRange, setDayRange] = useState(1);
+  const [dayRange, setDayRange] = useState(3);
   const [profile, setProfile] = useState("default");
   const [profiles, setProfiles] = useState([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
