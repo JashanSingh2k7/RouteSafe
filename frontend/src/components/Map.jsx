@@ -6,6 +6,8 @@ import { MAPBOX_TOKEN, DEFAULT_CENTER, DEFAULT_ZOOM } from "../config";
 import {
   segmentsToGeoJSON,
   polygonsToGeoJSON,
+  firesToGeoJSON,
+  hexGridToGeoJSON,
   riskColor,
   riskLabel,
   getRouteBounds,
@@ -29,39 +31,26 @@ const ROUTE_CASING = "route-segments-casing";
 const SMOKE_SOURCE = "smoke-polygons";
 const SMOKE_LAYER = "smoke-polygons-fill";
 const SMOKE_OUTLINE = "smoke-polygons-outline";
+const HEX_SOURCE = "hex-grid";
+const HEX_FILL = "hex-grid-fill";
+const HEX_OUTLINE = "hex-grid-outline";
 const FIRE_SOURCE = "fire-markers";
 const FIRE_LAYER = "fire-markers-circle";
 const FIRE_PULSE = "fire-markers-pulse";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
-function extractFireMarkers(polygons) {
-  const seen = new Set();
-  const features = [];
-  for (const poly of polygons) {
-    const key = poly.source_fire;
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    const [latStr, lonStr] = key.split(",");
-    const lat = parseFloat(latStr);
-    const lon = parseFloat(lonStr);
-    if (isNaN(lat) || isNaN(lon)) continue;
-    features.push({
-      type: "Feature",
-      properties: { source_fire: key, severity: poly.severity },
-      geometry: { type: "Point", coordinates: [lon, lat] },
-    });
-  }
-  return { type: "FeatureCollection", features };
-}
-
 export default function Map({
   scoredSegments,
   hazardPolygons,
+  hexGrid,
+  fires,
   selectedHours,
   hoveredSegment,
   onSegmentHover,
 }) {
+
+  console.log("🔥 Fires prop in Map component:", fires);
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -85,7 +74,7 @@ export default function Map({
     map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-left");
 
     map.on("load", () => {
-      // Smoke polygons
+      // ── Smoke polygons ─────────────────────────────────────────────
       map.addSource(SMOKE_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: SMOKE_LAYER,
@@ -114,7 +103,42 @@ export default function Map({
         },
       });
 
-      // Route segments
+      // ── H3 hex grid ────────────────────────────────────────────────
+      map.addSource(HEX_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: HEX_FILL,
+        type: "fill",
+        source: HEX_SOURCE,
+        paint: {
+          "fill-color": [
+            "interpolate", ["linear"], ["get", "severity"],
+            0,    "rgba(60,60,60,0.0)",
+            0.15, "rgba(80,80,80,0.15)",
+            0.35, "rgba(120,120,120,0.25)",
+            0.6,  "rgba(249,115,22,0.35)",
+            1.0,  "rgba(239,68,68,0.50)",
+          ],
+          "fill-opacity": 1,
+        },
+      });
+      map.addLayer({
+        id: HEX_OUTLINE,
+        type: "line",
+        source: HEX_SOURCE,
+        paint: {
+          "line-color": [
+            "interpolate", ["linear"], ["get", "severity"],
+            0,    "rgba(60,60,60,0.0)",
+            0.15, "rgba(100,100,100,0.1)",
+            0.35, "rgba(140,140,140,0.15)",
+            0.6,  "rgba(249,115,22,0.25)",
+            1.0,  "rgba(239,68,68,0.35)",
+          ],
+          "line-width": 0.5,
+        },
+      });
+
+      // ── Route segments ─────────────────────────────────────────────
       map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: ROUTE_CASING,
@@ -135,7 +159,7 @@ export default function Map({
         },
       });
 
-      // Fire markers
+      // ── Fire markers ───────────────────────────────────────────────
       map.addSource(FIRE_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: FIRE_PULSE,
@@ -159,7 +183,7 @@ export default function Map({
       readyRef.current = true;
     });
 
-    // Hover
+    // ── Hover interaction ──────────────────────────────────────────────
     let hoveredId = null;
     map.on("mousemove", ROUTE_LAYER, (e) => {
       if (!e.features?.length) return;
@@ -175,9 +199,9 @@ export default function Map({
       onSegmentHover?.(idx);
 
       const risk = feature.properties.risk_score;
-      const pm25 = feature.properties.pm25_estimate;
-      const dose = feature.properties.smoke_dose_ug;
+      const aqi = feature.properties.aqi_estimate;
       const dist = feature.properties.distance_km;
+      const time = feature.properties.cumulative_time_min;
       const color = riskColor(risk);
       const label = riskLabel(risk);
       const pct = (risk * 100).toFixed(0);
@@ -188,9 +212,8 @@ export default function Map({
           <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>
           <span>${label} — ${pct}%</span>
         </div>`;
-      if (pm25) html += `<div>PM2.5: ${pm25} µg/m³</div>`;
-      if (dose) html += `<div>Dose: ${parseFloat(dose).toFixed(1)} µg</div>`;
-      html += `<div style="color:#94a3b8">${dist} km</div></div>`;
+      if (aqi) html += `<div>AQI ~${aqi}</div>`;
+      html += `<div style="color:#94a3b8">${dist} km · t+${Math.round(time || 0)}m</div></div>`;
 
       if (!popupRef.current) {
         popupRef.current = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 12 });
@@ -212,7 +235,7 @@ export default function Map({
     return () => { map.remove(); mapRef.current = null; readyRef.current = false; };
   }, []);
 
-  // Update route
+  // ── Update route ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
     const map = mapRef.current;
@@ -227,21 +250,31 @@ export default function Map({
     }
   }, [scoredSegments]);
 
-  // Update smoke
+  // ── Update smoke polygons ────────────────────────────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
     const geojson = hazardPolygons?.length ? polygonsToGeoJSON(hazardPolygons, selectedHours) : EMPTY_FC;
     mapRef.current.getSource(SMOKE_SOURCE)?.setData(geojson);
   }, [hazardPolygons, selectedHours]);
 
-  // Update fires
+  // ── Update H3 hex grid ───────────────────────────────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
-    const geojson = hazardPolygons?.length ? extractFireMarkers(hazardPolygons) : EMPTY_FC;
-    mapRef.current.getSource(FIRE_SOURCE)?.setData(geojson);
-  }, [hazardPolygons]);
+    if (!hexGrid || Object.keys(hexGrid).length === 0) return;
 
-  // Sidebar hover sync
+    hexGridToGeoJSON(hexGrid).then((geojson) => {
+      mapRef.current?.getSource(HEX_SOURCE)?.setData(geojson);
+    });
+  }, [hexGrid]);
+
+  // ── Update fire markers (from actual fire_hazards data) ──────────────────
+  useEffect(() => {
+    if (!readyRef.current || !mapRef.current) return;
+    const geojson = fires?.length ? firesToGeoJSON(fires) : EMPTY_FC;
+    mapRef.current.getSource(FIRE_SOURCE)?.setData(geojson);
+  }, [fires]);
+
+  // ── Sidebar hover sync ───────────────────────────────────────────────────
   useEffect(() => {
     if (!readyRef.current || !mapRef.current) return;
     const map = mapRef.current;

@@ -42,31 +42,31 @@ export default function RouteInput({ onSubmit, loading }) {
   const selectedProfile = profiles.find((p) => p.key === profile);
 
   const inputClass =
-    "w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-2 text-sm text-gray-200 " +
-    "outline-none focus:border-gray-500 transition-colors";
+    "w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-2 text-sm text-neutral-100 " +
+    "outline-none focus:border-neutral-500 transition-colors h-[40px]";
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 border-b border-gray-800 flex flex-col gap-3">
+    <form onSubmit={handleSubmit} className="p-4 border-b border-neutral-800 flex flex-col gap-3">
       {/* Origin / Destination */}
       <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Origin</label>
+          <label className="text-[10px] font-medium text-neutral-500 uppercase tracking-wider">Origin</label>
           <input
             type="text"
             value={origin}
             onChange={(e) => setOrigin(e.target.value)}
-            placeholder="Calgary, AB"
+            placeholder="Example: Calgary, AB"
             disabled={loading}
             className={inputClass}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Destination</label>
+          <label className="text-[10px] font-medium text-neutral-500 uppercase tracking-wider">Destination</label>
           <input
             type="text"
             value={destination}
             onChange={(e) => setDestination(e.target.value)}
-            placeholder="Kamloops, BC"
+            placeholder="Example: Kamloops, BC"
             disabled={loading}
             className={inputClass}
           />
@@ -75,14 +75,19 @@ export default function RouteInput({ onSubmit, loading }) {
 
       {/* Health Profile */}
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Health Profile</label>
-        <select value={profile} onChange={(e) => setProfile(e.target.value)} disabled={loading} className={inputClass}>
+        <label className="text-[10px] font-medium text-neutral-500 uppercase tracking-wider">Health Profile</label>
+        <select 
+          value={profile} 
+          onChange={(e) => setProfile(e.target.value)} 
+          disabled={loading} 
+          className={`${inputClass} [color-scheme:dark]`}
+        >
           {profiles.map((p) => (
             <option key={p.key} value={p.key}>{p.label}</option>
           ))}
         </select>
         {selectedProfile && selectedProfile.sensitivity > 1 && (
-          <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 border border-amber-500/25 rounded text-amber-400 text-[10px] font-medium w-fit">
+          <span className="inline-block mt-1 px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-neutral-400 text-[10px] font-medium w-fit">
             {selectedProfile.sensitivity}× sensitivity
           </span>
         )}
@@ -92,7 +97,7 @@ export default function RouteInput({ onSubmit, loading }) {
       <button
         type="button"
         onClick={() => setShowAdvanced(!showAdvanced)}
-        className="text-left text-gray-500 text-[11px] hover:text-gray-400 transition-colors bg-transparent border-none cursor-pointer"
+        className="text-left text-neutral-500 text-[11px] hover:text-neutral-400 transition-colors bg-transparent border-none cursor-pointer"
       >
         {showAdvanced ? "▾" : "▸"} Advanced
       </button>
@@ -100,25 +105,25 @@ export default function RouteInput({ onSubmit, loading }) {
       {showAdvanced && (
         <div className="flex gap-2">
           <div className="flex-1 flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Radius (km)</label>
+            <label className="text-[10px] font-medium text-neutral-500 uppercase tracking-wider">Radius (km)</label>
             <input
               type="number"
               value={radiusKm}
               onChange={(e) => setRadiusKm(parseInt(e.target.value) || 100)}
               min={10} max={500}
               disabled={loading}
-              className={inputClass}
+              className={`${inputClass} [color-scheme:dark]`}
             />
           </div>
           <div className="flex-1 flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Lookback (days)</label>
+            <label className="text-[10px] font-medium text-neutral-500 uppercase tracking-wider">Lookback (days)</label>
             <input
               type="number"
               value={dayRange}
               onChange={(e) => setDayRange(parseInt(e.target.value) || 1)}
               min={1} max={10}
               disabled={loading}
-              className={inputClass}
+              className={`${inputClass} [color-scheme:dark]`}
             />
           </div>
         </div>
@@ -128,13 +133,13 @@ export default function RouteInput({ onSubmit, loading }) {
       <button
         type="submit"
         disabled={loading || !origin.trim() || !destination.trim()}
-        className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed
-          text-gray-950 font-semibold text-sm rounded flex items-center justify-center gap-2
-          transition-all hover:shadow-lg hover:shadow-amber-500/20 active:translate-y-0"
+        className="w-full py-2.5 px-4 bg-neutral-200 hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed
+          text-neutral-900 font-semibold text-sm rounded flex items-center justify-center gap-2
+          transition-all hover:shadow-lg hover:shadow-neutral-200/20 active:translate-y-0"
       >
         {loading ? (
           <span className="flex items-center gap-2">
-            <span className="w-3.5 h-3.5 border-2 border-gray-950/25 border-t-gray-950 rounded-full animate-spin" />
+            <span className="w-3.5 h-3.5 border-2 border-neutral-900/25 border-t-neutral-900 rounded-full animate-spin" />
             Analyzing route…
           </span>
         ) : (

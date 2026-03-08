@@ -29,7 +29,7 @@ export default function SidePanel({
   const [expandedDose, setExpandedDose] = useState(false);
 
   return (
-    <aside className="w-[380px] h-screen bg-gray-950 border-r border-gray-800 flex flex-col overflow-y-auto overflow-x-hidden
+    <aside className="w-[380px] h-screen bg-neutral-900 border-r border-gray-800 flex flex-col overflow-y-auto overflow-x-hidden
       scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
 
       {/* Header */}

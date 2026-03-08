@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from models.schemas import HazardPolygon, ScoredSegment, SmokeDoseReport
+from models.schemas import HazardPoint, HazardPolygon, ScoredSegment, SmokeDoseReport
 from services import firms, envcanada, aqi
 from services.polyline_decoder import decode_polyline, build_segments, compute_route_center
 from services.hazard_field import generate_hazard_field
@@ -44,6 +44,8 @@ class ScoreRouteResponse(BaseModel):
     """Full pipeline output — scored route + hazard field + dose report."""
     scored_segments:    list[ScoredSegment]
     hazard_polygons:    list[HazardPolygon]
+    fire_hazards:       list[HazardPoint]
+    hex_grid:           dict[str, float]
     smoke_dose:         SmokeDoseReport
     max_risk_score:     float
     high_risk_count:    int
@@ -185,6 +187,8 @@ async def score_route_endpoint(body: ScoreRouteRequest):
     return ScoreRouteResponse(
         scored_segments=result["scored_segments"],
         hazard_polygons=polygons,
+        fire_hazards=fire_hazards,
+        hex_grid=flat_grid,
         smoke_dose=dose_report,
         max_risk_score=result["max_risk_score"],
         high_risk_count=result["high_risk_count"],
