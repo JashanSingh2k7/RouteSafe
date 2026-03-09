@@ -5,11 +5,9 @@ L2 — Hazard Field Generator
 
 Takes L1 data (fire hotspots, wind vectors, AQI readings) and produces:
   1. HazardPolygons       — time-stamped smoke zones for frontend map
-  2. Flat hex grid         — peak danger scores for simple visualization
-  3. Time-bucketed grids   — per-time-step grids so L3 scores segments
+  2. Flat hex grid        — peak danger scores for simple visualization
+  3. Time-bucketed grids  — per-time-step grids so L3 scores segments
                              against the correct future time window
-
-Consumed by: routers/scoring.py, L3 route scorer
 """
 
 import math
@@ -22,6 +20,9 @@ from services.wind_interpolation import interpolate_wind
 
 logger = logging.getLogger(__name__)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# INTERNAL DATA STRUCTURES
+# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class SmokePlume:
@@ -69,7 +70,6 @@ SEVERITY_FLOOR = {
     "critical": 0.85,
 }
 
-# Calm wind fallback — produces roughly circular plumes with slight drift
 CALM_WIND: dict = {"speed_kmh": 5.0, "direction_deg": 0.0, "gusts_kmh": None}
 
 
@@ -107,10 +107,6 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _interpolate_wind_safe(lat: float, lon: float, wind_vectors: list[WindVector]) -> dict:
-    """
-    Safely interpolate wind at a location. Returns CALM_WIND if interpolation
-    fails for any reason (no vectors, too far, etc).
-    """
     if not wind_vectors:
         return CALM_WIND
     try:
@@ -205,15 +201,12 @@ def _merge_hex_grid(cells):
 
 
 def _overlay_aqi(grid, aqi_hazards, now, resolution=H3_RESOLUTION):
-    """
-    Merge AQI smoke readings into the hex grid.
-    AQI is ground-truth — smoke that's already there, not predicted.
-    """
     aqi_severity_map = {"low": 0.1, "moderate": 0.3, "high": 0.6, "critical": 0.9}
     for hazard in aqi_hazards:
         severity = aqi_severity_map.get(hazard.severity, 0.2)
         radius_km = hazard.spatial_impact_radius or 10.0
-        k = max(1, int(radius_km / 5.16))
+        # Convert radius to hex ring distance (k)
+        k = max(1, int(radius_km / 5.16)) 
         centre_hex = h3.latlng_to_cell(hazard.lat, hazard.lon, resolution)
         for hex_id in h3.grid_disk(centre_hex, k):
             grid[hex_id] = min(grid.get(hex_id, 0.0) + severity, MAX_SEVERITY)
@@ -247,57 +240,48 @@ def generate_hazard_field(
     aqi_hazards:   list[HazardPoint],
     time_horizons: list[float] = TIME_HORIZONS_HOURS,
 ) -> tuple[list[HazardPolygon], dict[str, float], dict[float, dict[str, float]]]:
+    """
+    Master L2 function.
+    Now initializes every time step with AQI baseline and ADDS fire smoke on top.
+    """
     logger.info(
-        "generate_hazard_field() — %d fires, %d wind vectors, %d AQI, horizons=%s",
-        len(fires), len(wind_vectors), len(aqi_hazards), time_horizons,
+        "generate_hazard_field() — %d fires, %d wind vectors, %d AQI points",
+        len(fires), len(wind_vectors), len(aqi_hazards)
     )
     now = datetime.utcnow()
 
-    # ── No fires: AQI overlay only ────────────────────────────────────────
-    # AQI is ground-truth smoke, applies to ALL time horizons since it's
-    # already in the air. A segment 4 hours into the trip still drives
-    # through the same AQI reading.
-    if not fires:
-        logger.info("No fires — overlaying AQI only.")
-        aqi_grid = _overlay_aqi({}, aqi_hazards, now)
-        # Same AQI grid for every time horizon — smoke is already there
-        grids_by_time = {h: dict(aqi_grid) for h in time_horizons}
-        return [], aqi_grid, grids_by_time
+    # 1. Initialize all time buckets with the AQI baseline (ground-truth)
+    # AQI represents existing smoke in the air, so it persists across horizons.
+    base_aqi_grid = _overlay_aqi({}, aqi_hazards, now)
+    grids_by_time = {h: dict(base_aqi_grid) for h in time_horizons}
 
-    # ── Build plumes per fire per time horizon ────────────────────────────
     all_plumes = []
-    cells_by_time = {h: [] for h in time_horizons}
+    
+    # 2. Add fire plumes if fires exist
+    if fires:
+        cells_by_time = {h: [] for h in time_horizons}
 
-    for fire in fires:
-        wind = _interpolate_wind_safe(fire.lat, fire.lon, wind_vectors)
-        severity_base = _frp_to_severity(fire)
+        for fire in fires:
+            wind = _interpolate_wind_safe(fire.lat, fire.lon, wind_vectors)
+            severity_base = _frp_to_severity(fire)
 
-        logger.info(
-            "Fire (%.4f, %.4f) — severity=%.3f (tier=%s, frp=%s), wind=%.1f km/h from %.1f°",
-            fire.lat, fire.lon, severity_base, fire.severity,
-            fire.metadata.get("frp_mw", "N/A"),
-            wind["speed_kmh"], wind["direction_deg"],
-        )
+            logger.debug("Processing Fire (%.4f, %.4f) — base_severity=%.3f", 
+                         fire.lat, fire.lon, severity_base)
 
-        for hours in time_horizons:
-            plume = _generate_plume(fire, wind, hours, now, severity_base)
-            all_plumes.append(plume)
-            cells_by_time[hours].extend(_rasterise_plume(plume))
+            for hours in time_horizons:
+                plume = _generate_plume(fire, wind, hours, now, severity_base)
+                all_plumes.append(plume)
+                cells_by_time[hours].extend(_rasterise_plume(plume))
 
-    # ── Build per-time grids ──────────────────────────────────────────────
-    grids_by_time = {}
-    for hours, cells in cells_by_time.items():
-        grids_by_time[hours] = _merge_hex_grid(cells)
+        # 3. Merge fire smoke into the AQI-initialized buckets
+        for hours, cells in cells_by_time.items():
+            fire_grid = _merge_hex_grid(cells)
+            for hex_id, fire_sev in fire_grid.items():
+                current_val = grids_by_time[hours].get(hex_id, 0.0)
+                # ADDITIVE: Smoke + AQI = higher risk
+                grids_by_time[hours][hex_id] = min(current_val + fire_sev, MAX_SEVERITY)
 
-    # ── Overlay AQI on ALL time buckets ───────────────────────────────────
-    # AQI is measured smoke that's already present. It doesn't disappear
-    # at T+2h just because our fire plumes change shape.
-    for hours in time_horizons:
-        grids_by_time[hours] = _overlay_aqi(
-            grids_by_time.get(hours, {}), aqi_hazards, now,
-        )
-
-    # ── Flat grid: peak severity across all time steps ────────────────────
+    # 4. Generate Flat Grid (Peak severity per hex across all time)
     flat_grid = {}
     for t_grid in grids_by_time.values():
         for hex_id, sev in t_grid.items():
@@ -306,7 +290,7 @@ def generate_hazard_field(
     polygons = _plumes_to_polygons(all_plumes)
 
     logger.info(
-        "Hazard field complete — %d polygons, %d flat hexes, %d time buckets.",
-        len(polygons), len(flat_grid), len(grids_by_time),
+        "Hazard field complete — %d polygons, %d flat hexes. Sources: Fires=%s, AQI=%s",
+        len(polygons), len(flat_grid), bool(fires), bool(aqi_hazards)
     )
     return polygons, flat_grid, grids_by_time
