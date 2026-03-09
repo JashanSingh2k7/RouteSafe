@@ -2,8 +2,6 @@
 envcanada.py
 
 Fetches current wind data for a given location using WeatherAPI.com.
-Free tier: 1M requests/month (requires API key).
-
 Output: WindVector (from models.schemas) — consumed by L2 alongside
         HazardPoint to determine smoke polygon stretch direction and speed.
 
