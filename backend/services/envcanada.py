@@ -1,11 +1,7 @@
 """
-envcanada.py
-
 Fetches current wind data for a given location using WeatherAPI.com.
 Output: WindVector (from models.schemas) — consumed by L2 alongside
-        HazardPoint to determine smoke polygon stretch direction and speed.
-
-Env var required: WEATHER_API_KEY
+HazardPoint to determine smoke polygon stretch direction and speed.
 """
 
 import asyncio
@@ -16,23 +12,24 @@ import os
 from typing import Optional
 from models.schemas import WindVector
 
+# better to use logger instread of print, because we can turn off printing
 logger = logging.getLogger(__name__)
 
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 WEATHER_API_URL = "http://api.weatherapi.com/v1/current.json"
 
 if not WEATHER_API_KEY:
-    logger.warning("WEATHER_API_KEY not set — wind fetches will fail")
+    logger.warning("the api key is not set")
 
-# Cache TTL in seconds — wind shifts gradually
-CACHE_TTL_SECONDS = 600  # 10 minutes
+CACHE_TTL_SECONDS = 600 
 
 # Local in-memory cache: key -> (timestamp, WindVector)
-_wind_cache: dict[tuple[float, float], tuple[float, WindVector]] = {}
+# What is looks like for reference-> dict[tuple[float, float], tuple[float, WindVector]] 
+_wind_cache =  {}
 
 # Concurrency limit for parallel fetches
+# basically we can do 10 concurrent api calls at the same time for envcanada. 
 _FETCH_SEMAPHORE = asyncio.Semaphore(10)
-
 
 def _cache_get(key: tuple[float, float]) -> tuple[bool, Optional[WindVector]]:
     """Return (hit, value). Expired entries are evicted."""

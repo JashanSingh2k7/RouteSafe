@@ -1,4 +1,5 @@
 # to run: uvicorn main:app --reload --port 8000
+# python3 -m uvicorn main:app --reload
 
 import logging
 from contextlib import asynccontextmanager
