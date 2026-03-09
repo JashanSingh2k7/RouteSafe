@@ -1,64 +1,33 @@
 """
-routers/directions.py
-
-Proxy for Google Directions API.
-The browser can't call Google Directions directly (no CORS),
-so the frontend calls us and we forward to Google.
-
-GET /directions?origin=Calgary,AB&destination=Banff,AB&alternatives=false
-GET /directions?origin=Calgary,AB&destination=Banff,AB&waypoints=via:51.2,-116.1|via:51.3,-115.9
+routers/directions.py — Proxy for Google Directions API with waypoints support.
 """
 
-import os
-import logging
+import os, logging
 from typing import Optional
-
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 GOOGLE_MAPS_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 
 
-@router.get(
-    "",
-    summary="Proxy Google Directions API",
-    description=(
-        "Forwards origin/destination/waypoints to Google Directions and returns "
-        "the full response including encoded polyline and duration. "
-        "The frontend uses overview_polyline.points and legs[].duration.value."
-    ),
-)
+@router.get("", summary="Proxy Google Directions API")
 async def get_directions(
-    origin:       str  = Query(..., description="Start location", example="Calgary, AB"),
-    destination:  str  = Query(..., description="End location", example="Banff, AB"),
-    alternatives: bool = Query(False, description="Return alternative routes"),
-    waypoints:    Optional[str] = Query(None, description="Pipe-separated waypoints, e.g. via:51.2,-116.1|via:51.3,-115.9"),
+    origin: str = Query(...), destination: str = Query(...),
+    alternatives: bool = Query(False),
+    waypoints: Optional[str] = Query(None, description="Pipe-separated waypoints, e.g. via:51.2,-116.1|via:51.3,-115.9"),
 ):
     if not GOOGLE_MAPS_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="GOOGLE_MAPS_API_KEY is not set on the backend.",
-        )
+        raise HTTPException(status_code=500, detail="GOOGLE_MAPS_API_KEY is not set.")
 
-    params = {
-        "origin": origin,
-        "destination": destination,
-        "alternatives": str(alternatives).lower(),
-        "key": GOOGLE_MAPS_KEY,
-    }
-
+    params = {"origin": origin, "destination": destination, "alternatives": str(alternatives).lower(), "key": GOOGLE_MAPS_KEY}
     if waypoints:
         params["waypoints"] = waypoints
 
-    logger.info(
-        "Proxying directions: %s → %s (alternatives=%s, waypoints=%s)",
-        origin, destination, alternatives, waypoints,
-    )
+    logger.info("Proxying directions: %s -> %s (waypoints=%s)", origin, destination, waypoints)
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -71,9 +40,6 @@ async def get_directions(
         raise HTTPException(status_code=502, detail=f"Failed to reach Google API: {e}")
 
     if data.get("status") not in ("OK", "ZERO_RESULTS"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Google Directions error: {data.get('status')} — {data.get('error_message', '')}",
-        )
+        raise HTTPException(status_code=502, detail=f"Google Directions error: {data.get('status')} — {data.get('error_message', '')}")
 
     return data

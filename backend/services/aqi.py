@@ -2,199 +2,185 @@
 aqi.py
 
 Fetches current air quality index (AQI) and PM2.5 data for a given location
-using the Open-Meteo Air Quality API.
-No API key required.
+using the WAQI (AQICN) API. 
+Generous free tier: 1000 requests per minute.
 
 Output: HazardPoint with hazard_type="smoke" — consumed by L2 alongside
         fire HazardPoints and WindVectors to build the full hazard field.
-
-Why AQI matters for routing:
-    A route segment can be dangerous from smoke even if there's no active fire
-    nearby — smoke travels. AQI stations give us ground-truth smoke presence
-    that satellite fire detection alone can miss (e.g. smoke from a fire 200km
-    away drifting over a highway).
 """
 
+import asyncio
 import logging
+import time
 import httpx
-
+import os
 from models.schemas import HazardPoint
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-OPEN_METEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+# Fallback token for dev; ideally set this in your .env file
+WAQI_TOKEN = os.getenv("WAQI_TOKEN", "demo")
+WAQI_BASE_URL = "https://api.waqi.info/feed"
 
-# PM2.5 thresholds (µg/m³) — based on Canada's AQHI breakpoints
-# These map to HazardPoint severity levels
-PM25_THRESHOLDS = {
-    "low":      12.0,   # 0–12   µg/m³ — good air quality
-    "moderate": 35.4,   # 12–35  µg/m³ — moderate, sensitive groups affected
-    "high":     55.4,   # 35–55  µg/m³ — unhealthy for all
-                        # >55    µg/m³ — critical, route should be avoided
+# ---------------------------------------------------------------------------
+# NOTE: WAQI's iaqi.pm25.v returns an AQI *sub-index*, NOT raw µg/m³.
+# These thresholds use the EPA AQI scale directly:
+#   0-50   = Good
+#   51-100 = Moderate
+#   101-150 = Unhealthy for Sensitive Groups
+#   151-200 = Unhealthy
+#   201+   = Very Unhealthy / Hazardous
+# ---------------------------------------------------------------------------
+AQI_THRESHOLDS = {
+    "low":      50,
+    "moderate": 100,
+    "high":     150,
 }
 
+# Cache TTL in seconds (AQI data refreshed ~hourly by most stations)
+CACHE_TTL_SECONDS = 900  # 15 minutes
 
-def _pm25_to_severity(pm25: float) -> str:
-    """Map a PM2.5 reading to a severity string for HazardPoint."""
-    if pm25 <= PM25_THRESHOLDS["low"]:
+# Local in-memory cache: key -> (timestamp, value)
+_aqi_cache: dict[tuple[float, float], tuple[float, Optional[HazardPoint]]] = {}
+
+# Concurrency limit for parallel fetches (stay well under 1000 rpm)
+_FETCH_SEMAPHORE = asyncio.Semaphore(20)
+
+
+def _aqi_to_severity(aqi: float) -> str:
+    if aqi <= AQI_THRESHOLDS["low"]:
         return "low"
-    elif pm25 <= PM25_THRESHOLDS["moderate"]:
+    elif aqi <= AQI_THRESHOLDS["moderate"]:
         return "moderate"
-    elif pm25 <= PM25_THRESHOLDS["high"]:
+    elif aqi <= AQI_THRESHOLDS["high"]:
         return "high"
     else:
         return "critical"
 
 
-def _pm25_to_radius(pm25: float) -> float:
-    """
-    Estimate spatial impact radius (km) from PM2.5 concentration.
-    Higher concentration = larger area affected around that point.
-    L2 uses this as the base radius before applying wind stretch.
-    """
-    if pm25 <= PM25_THRESHOLDS["low"]:
+def _aqi_to_radius_km(aqi: float) -> float:
+    """Spatial impact radius in km — larger AQI implies broader regional haze."""
+    if aqi <= AQI_THRESHOLDS["low"]:
         return 5.0
-    elif pm25 <= PM25_THRESHOLDS["moderate"]:
+    elif aqi <= AQI_THRESHOLDS["moderate"]:
         return 15.0
-    elif pm25 <= PM25_THRESHOLDS["high"]:
+    elif aqi <= AQI_THRESHOLDS["high"]:
         return 30.0
     else:
         return 50.0
 
 
-def _build_url(lat: float, lon: float) -> str:
-    return (
-        f"{OPEN_METEO_AQ_URL}"
-        f"?latitude={lat}&longitude={lon}"
-        f"&current=pm2_5,us_aqi,dust"
-        f"&forecast_days=1"
-    )
+def _cache_get(key: tuple[float, float]) -> tuple[bool, Optional[HazardPoint]]:
+    """Return (hit, value). Expired entries are evicted."""
+    if key in _aqi_cache:
+        ts, value = _aqi_cache[key]
+        if time.monotonic() - ts < CACHE_TTL_SECONDS:
+            return True, value
+        del _aqi_cache[key]
+    return False, None
+
+
+def _cache_set(key: tuple[float, float], value: Optional[HazardPoint]) -> None:
+    _aqi_cache[key] = (time.monotonic(), value)
 
 
 async def get_aqi_hazard(lat: float, lon: float) -> Optional[HazardPoint]:
     """
-    Fetch current AQI and PM2.5 for a location and return a HazardPoint.
-
-    Returns None if air quality is good (below low threshold) — no hazard
-    to add to the field.
-
-    Args:
-        lat: Latitude of the point to check.
-        lon: Longitude of the point to check.
-
-    Returns:
-        HazardPoint with hazard_type="smoke", or None if air is clean.
-
-    Raises:
-        RuntimeError: If the API call fails or returns unexpected data.
+    Fetch current AQI from the nearest station via WAQI API.
+    Returns a HazardPoint only when air quality exceeds the "low" threshold.
     """
-    url = _build_url(lat, lon)
-    logger.info("Fetching AQI data: lat=%s lon=%s", lat, lon)
+    # Round to 2 decimal places (~1.1 km) to group nearby route samples
+    cache_key = (round(lat, 2), round(lon, 2))
+    hit, cached = _cache_get(cache_key)
+    if hit:
+        logger.debug("AQI cache hit for %s", cache_key)
+        return cached
+
+    url = f"{WAQI_BASE_URL}/geo:{lat};{lon}/?token={WAQI_TOKEN}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"Open-Meteo AQ API returned HTTP {e.response.status_code}: {e}")
-    except httpx.RequestError as e:
-        raise RuntimeError(f"Failed to reach Open-Meteo AQ API: {e}")
+        async with _FETCH_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
 
-    try:
-        current = data["current"]
-        pm25    = float(current.get("pm2_5") or 0)
-        us_aqi  = float(current.get("us_aqi") or 0)
-        dust    = float(current.get("dust")   or 0)
-    except (KeyError, TypeError, ValueError) as e:
-        raise RuntimeError(f"Unexpected Open-Meteo AQ response format: {e}")
+        if data.get("status") != "ok":
+            logger.warning("WAQI API error for (%s, %s): %s", lat, lon, data.get("data"))
+            return None
 
-    logger.info(
-        "AQI at (%.4f, %.4f): PM2.5=%.1f µg/m³ | US AQI=%.0f | dust=%.1f",
-        lat, lon, pm25, us_aqi, dust
-    )
+        station_data = data["data"]
 
-    # Don't create a hazard point for clean air — keeps the hazard field lean
-    if pm25 <= PM25_THRESHOLDS["low"]:
-        logger.info("Air quality good at (%.4f, %.4f) — no hazard created.", lat, lon)
+        # iaqi.pm25.v is the AQI sub-index for PM2.5 (NOT raw µg/m³).
+        # Fall back to composite AQI if PM2.5 sub-index is unavailable.
+        pm25_aqi = station_data.get("iaqi", {}).get("pm25", {}).get("v")
+        composite_aqi = station_data.get("aqi", 0)
+        aqi_value = float(pm25_aqi if pm25_aqi is not None else composite_aqi)
+
+        if aqi_value <= AQI_THRESHOLDS["low"]:
+            _cache_set(cache_key, None)
+            return None
+
+        # "dominentpol" is intentionally misspelled — that's the actual WAQI key
+        hazard = HazardPoint(
+            lat=lat,
+            lon=lon,
+            hazard_type="smoke",
+            severity=_aqi_to_severity(aqi_value),
+            source=f"WAQI: {station_data.get('city', {}).get('name', 'Unknown Station')}",
+            confidence=None,
+            spatial_impact_radius=_aqi_to_radius_km(aqi_value),
+            metadata={
+                "pm25_aqi_index": aqi_value,
+                "composite_aqi": composite_aqi,
+                "station_id": station_data.get("idx"),
+                "dominant_pollutant": station_data.get("dominentpol"),
+            },
+        )
+
+        _cache_set(cache_key, hazard)
+        return hazard
+
+    except Exception as e:
+        logger.error("WAQI fetch failed for (%.4f, %.4f): %s", lat, lon, e)
         return None
-
-    severity = _pm25_to_severity(pm25)
-    radius   = _pm25_to_radius(pm25)
-
-    return HazardPoint(
-        lat=lat,
-        lon=lon,
-        hazard_type="smoke",
-        severity=severity,
-        source="Open-Meteo AQ",
-        confidence=None,            # AQI is measured, not probabilistic
-        spatial_impact_radius=radius,
-        metadata={
-            "pm2_5_ugm3": pm25,
-            "us_aqi":     us_aqi,
-            "dust_ugm3":  dust,
-        },
-    )
 
 
 async def get_aqi_hazards_for_route(
     points: list[tuple[float, float]],
-    sample_every: int = 3,
+    sample_every: int = 5,
 ) -> list[HazardPoint]:
-    """
-    Fetch AQI hazard points for multiple locations along a route.
-
-    Samples every Nth point to keep API calls reasonable — same pattern
-    as get_wind_vectors_for_route() in envcanada.py.
-
-    Args:
-        points:       List of (lat, lon) tuples from the decoded route polyline.
-        sample_every: Query one point every N points (default 3).
-
-    Returns:
-        List of HazardPoint objects where smoke was detected.
-        Clean-air points are excluded (get_aqi_hazard returns None for those).
-    """
+    """Sample AQI along a route and return detected hazards (fetched in parallel)."""
     sampled = points[::sample_every]
-    logger.info(
-        "Fetching AQI for %d sampled route points (of %d total)",
-        len(sampled), len(points)
+    logger.info("Fetching WAQI for %d sampled route points", len(sampled))
+
+    results = await asyncio.gather(
+        *(get_aqi_hazard(lat, lon) for lat, lon in sampled),
+        return_exceptions=True,
     )
 
     hazards: list[HazardPoint] = []
-    for lat, lon in sampled:
-        try:
-            hazard = await get_aqi_hazard(lat, lon)
-            if hazard:
-                hazards.append(hazard)
-        except RuntimeError as e:
-            logger.warning("Skipping AQI fetch for (%.4f, %.4f): %s", lat, lon, e)
+    for r in results:
+        if isinstance(r, HazardPoint):
+            hazards.append(r)
+        elif isinstance(r, Exception):
+            logger.warning("AQI fetch exception in gather: %s", r)
 
-    logger.info("Found %d smoke hazard points along route.", len(hazards))
     return hazards
 
 
-# ── Local test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import asyncio
-
     async def _test():
-        # Kamloops, BC — frequently affected by wildfire smoke
+        logging.basicConfig(level=logging.DEBUG)
+        # Kamloops, BC
         lat, lon = 50.6745, -120.3273
-        print(f"Fetching AQI hazard for ({lat}, {lon}) ...")
+        logger.info("Testing WAQI Fetch...")
         hazard = await get_aqi_hazard(lat, lon)
         if hazard:
-            print(hazard)
+            print(f"Hazard Found: {hazard.severity} severity at {hazard.source}")
+            print(f"  PM2.5 AQI sub-index: {hazard.metadata['pm25_aqi_index']}")
         else:
-            print("Air quality good — no hazard point created.")
-
-        # Test route sampling
-        route_points = [(50.6 + i * 0.05, -120.3 + i * 0.02) for i in range(10)]
-        print("\nFetching AQI for route points...")
-        hazards = await get_aqi_hazards_for_route(route_points, sample_every=3)
-        for h in hazards:
-            print(h)
+            print("Air quality good or station unavailable.")
 
     asyncio.run(_test())

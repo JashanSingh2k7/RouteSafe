@@ -1,30 +1,72 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
 @source "../src/**/*.{js,jsx}";
 
-/* Mapbox GL overrides — can't use Tailwind on injected DOM */
+:root {
+  --bg-base: #09090b;
+  --bg-raised: #0f0f11;
+  --bg-surface: #141416;
+  --bg-hover: #1a1a1d;
+  --border: #1f1f23;
+  --border-subtle: #18181b;
+  --text-primary: #e4e4e7;
+  --text-secondary: #a1a1aa;
+  --text-muted: #63636b;
+  --text-dim: #3f3f46;
+  --accent: #e4e4e7;
+  --risk-safe: #3f3f46;
+  --risk-moderate: #a16207;
+  --risk-dangerous: #c2410c;
+  --risk-critical: #991b1b;
+}
+
+body {
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+/* Data typography */
+.font-data { font-family: 'JetBrains Mono', monospace; }
+
+/* Mapbox overrides */
 .mapboxgl-popup-content {
-  background: #1e293b !important;
-  border: 1px solid #334155 !important;
-  border-radius: 8px !important;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
+  background: #0f0f11 !important;
+  border: 1px solid #1f1f23 !important;
+  border-radius: 4px !important;
   padding: 10px 12px !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6) !important;
 }
 
 .mapboxgl-popup-tip {
-  border-top-color: #1e293b !important;
+  border-top-color: #0f0f11 !important;
 }
 
 .mapboxgl-ctrl-group {
-  background: #1e293b !important;
-  border: 1px solid #334155 !important;
-  border-radius: 6px !important;
+  background: #0f0f11 !important;
+  border: 1px solid #1f1f23 !important;
+  border-radius: 2px !important;
 }
 
 .mapboxgl-ctrl-group button + button {
-  border-top: 1px solid #334155 !important;
+  border-top: 1px solid #1f1f23 !important;
 }
 
 .mapboxgl-ctrl-group button span {
-  filter: invert(0.8);
+  filter: invert(0.7);
+}
+
+/* Utility for risk bar glow */
+.risk-glow {
+  box-shadow: 0 0 6px currentColor;
 }
