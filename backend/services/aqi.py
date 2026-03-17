@@ -18,20 +18,9 @@ from models.schemas import HazardPoint
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-
-# Fallback token for dev; ideally set this in your .env file
 WAQI_TOKEN = os.getenv("WAQI_TOKEN", "demo")
 WAQI_BASE_URL = "https://api.waqi.info/feed"
 
-# ---------------------------------------------------------------------------
-# NOTE: WAQI's iaqi.pm25.v returns an AQI *sub-index*, NOT raw µg/m³.
-# These thresholds use the EPA AQI scale directly:
-#   0-50   = Good
-#   51-100 = Moderate
-#   101-150 = Unhealthy for Sensitive Groups
-#   151-200 = Unhealthy
-#   201+   = Very Unhealthy / Hazardous
-# ---------------------------------------------------------------------------
 AQI_THRESHOLDS = {
     "low":      50,
     "moderate": 100,
@@ -47,7 +36,7 @@ _aqi_cache: dict[tuple[float, float], tuple[float, Optional[HazardPoint]]] = {}
 # Concurrency limit for parallel fetches (stay well under 1000 rpm)
 _FETCH_SEMAPHORE = asyncio.Semaphore(20)
 
-
+# basic checks
 def _aqi_to_severity(aqi: float) -> str:
     if aqi <= AQI_THRESHOLDS["low"]:
         return "low"
@@ -57,6 +46,7 @@ def _aqi_to_severity(aqi: float) -> str:
         return "high"
     else:
         return "critical"
+
 
 
 def _aqi_to_radius_km(aqi: float) -> float:
@@ -170,17 +160,17 @@ async def get_aqi_hazards_for_route(
     return hazards
 
 
-if __name__ == "__main__":
-    async def _test():
-        logging.basicConfig(level=logging.DEBUG)
-        # Kamloops, BC
-        lat, lon = 50.6745, -120.3273
-        logger.info("Testing WAQI Fetch...")
-        hazard = await get_aqi_hazard(lat, lon)
-        if hazard:
-            print(f"Hazard Found: {hazard.severity} severity at {hazard.source}")
-            print(f"  PM2.5 AQI sub-index: {hazard.metadata['pm25_aqi_index']}")
-        else:
-            print("Air quality good or station unavailable.")
+# if __name__ == "__main__":
+#     async def _test():
+#         logging.basicConfig(level=logging.DEBUG)
+#         # Kamloops, BC
+#         lat, lon = 50.6745, -120.3273
+#         logger.info("Testing WAQI Fetch...")
+#         hazard = await get_aqi_hazard(lat, lon)
+#         if hazard:
+#             print(f"Hazard Found: {hazard.severity} severity at {hazard.source}")
+#             print(f"  PM2.5 AQI sub-index: {hazard.metadata['pm25_aqi_index']}")
+#         else:
+#             print("Air quality good or station unavailable.")
 
-    asyncio.run(_test())
+#     asyncio.run(_test())
