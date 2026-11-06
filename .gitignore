@@ -1,4 +1,25 @@
-./venv
-venv/
+# Secrets — never commit real keys (use the .env.example files)
 .env
-.venv
+.env.*
+!.env.example
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Logs & archives
+*.log
+*.zip
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,7 +1,7 @@
 // src/components/SidePanel.jsx
 import { useState } from "react";
 import RouteInput from "./RouteInput";
-import { riskLabel, riskColor } from "../services/mapUtils";
+import { riskLabel } from "../services/mapUtils";
 
 function formatDuration(min) {
   const h = Math.floor(min / 60);

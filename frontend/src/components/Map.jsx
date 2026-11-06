@@ -67,6 +67,11 @@ export default function Map({
   const mapRef = useRef(null);
   const popupRef = useRef(null);
   const readyRef = useRef(false);
+  // Keep the latest hover callback without re-creating the map
+  const onSegmentHoverRef = useRef(onSegmentHover);
+  useEffect(() => {
+    onSegmentHoverRef.current = onSegmentHover;
+  }, [onSegmentHover]);
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -263,7 +268,7 @@ export default function Map({
 
       hoveredId = feature.id;
       map.setFeatureState({ source: ROUTE_SOURCE, id: hoveredId }, { hover: true });
-      onSegmentHover?.(idx);
+      onSegmentHoverRef.current?.(idx);
 
       const risk = feature.properties.risk_score;
       const aqi = feature.properties.aqi_estimate;
@@ -295,7 +300,7 @@ export default function Map({
         hoveredId = null;
       }
       popupRef.current?.remove();
-      onSegmentHover?.(null);
+      onSegmentHoverRef.current?.(null);
     });
 
     mapRef.current = map;

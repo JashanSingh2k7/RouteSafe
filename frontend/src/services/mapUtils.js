@@ -75,7 +75,9 @@ export async function hexGridToGeoJSON(hexGrid) {
       const boundary = h3.cellToBoundary(hexId).map(([lat, lng]) => [lng, lat]);
       boundary.push(boundary[0]);
       features.push({ type: "Feature", properties: { h3_index: hexId, severity }, geometry: { type: "Polygon", coordinates: [boundary] } });
-    } catch (e) {}
+    } catch {
+      // skip invalid H3 cell ids
+    }
   }
   return { type: "FeatureCollection", features };
 }

@@ -51,9 +51,9 @@ class IngestAllResponse(BaseModel):
     ),
 )
 async def get_fires(
-    lat:       float = Query(...,  description="Centre latitude",             example=51.0),
-    lon:       float = Query(...,  description="Centre longitude",            example=-115.5),
-    radius_km: float = Query(50.0, description="Search radius in kilometres", example=50.0),
+    lat:       float = Query(...,  description="Centre latitude",             examples=[51.0]),
+    lon:       float = Query(...,  description="Centre longitude",            examples=[-115.5]),
+    radius_km: float = Query(50.0, description="Search radius in kilometres", examples=[50.0]),
     day_range: int   = Query(1,    description="How many days back to query", ge=1, le=10),
 ):
     logger.info("GET /ingest/fires — lat=%s lon=%s radius=%skm", lat, lon, radius_km)
@@ -81,8 +81,8 @@ async def get_fires(
     ),
 )
 async def get_wind(
-    lat: float = Query(..., description="Latitude",  example=51.0),
-    lon: float = Query(..., description="Longitude", example=-115.5),
+    lat: float = Query(..., description="Latitude",  examples=[51.0]),
+    lon: float = Query(..., description="Longitude", examples=[-115.5]),
 ):
     logger.info("GET /ingest/wind — lat=%s lon=%s", lat, lon)
     try:
@@ -106,8 +106,8 @@ async def get_wind(
     ),
 )
 async def get_aqi(
-    lat: float = Query(..., description="Latitude",  example=51.0),
-    lon: float = Query(..., description="Longitude", example=-115.5),
+    lat: float = Query(..., description="Latitude",  examples=[51.0]),
+    lon: float = Query(..., description="Longitude", examples=[-115.5]),
 ):
     logger.info("GET /ingest/aqi — lat=%s lon=%s", lat, lon)
     try:
